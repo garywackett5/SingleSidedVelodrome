@@ -4,35 +4,51 @@ from brownie import config
 import math
 
 
-def test_simple_harvest(
-    gov,
+def test_simple_harvest(gov,
     token,
     vault,
     strategist,
     whale,
     strategy,
     chain,
+    woofy_filled_swapper,
     strategist_ms,
     sex,
     solid,
+    woofy,
+    yfi,
+    yfi_woofy_lp,
     amount,
-    accounts,
-):
+    accounts):
+    assert woofy.balanceOf(woofy_filled_swapper) > 0
+
     ## deposit to the vault after approving
-    aidrop = 10*1e18
+    aidrop = 0.1*1e18
     startingWhale = token.balanceOf(whale)-aidrop
     token.approve(vault, 2 ** 256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
     newWhale = token.balanceOf(whale)
 
+    print(yfi.balanceOf(yfi_woofy_lp))
+    print(woofy.balanceOf(yfi_woofy_lp))
+    print(strategy.neededToArbPeg())
+
     # harvest, store asset amount
     chain.sleep(1)
     strategy.setDoHealthCheck(False, {"from": gov})
     strategy.harvest({"from": gov})
+
+    print(yfi.balanceOf(yfi_woofy_lp))
+    print(woofy.balanceOf(yfi_woofy_lp))
+    print(strategy.neededToArbPeg())
+
+    
+    print(yfi.balanceOf(strategy))
+    print(woofy.balanceOf(strategy))
     chain.sleep(1)
     old_assets = vault.totalAssets()
     assert old_assets > 0
-    assert token.balanceOf(strategy) < 1e12 #we leave dust boo behind
+    assert token.balanceOf(strategy) < 1e12 
     assert strategy.estimatedTotalAssets() > 0
     print("\nStarting vault total assets: ", old_assets / (10 ** token.decimals()))
 

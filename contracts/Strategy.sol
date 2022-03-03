@@ -109,10 +109,10 @@ contract Strategy is BaseStrategy {
 
     string internal stratName; // we use this for our strategy's name on cloning
     address public lpToken =
-        address(0xD0660cD418a64a1d44E9214ad8e459324D8157f1); //var yfi/woofy
+        address(0x4b3a172283ecB7d07AB881a9443d38cB1c98F4d0); //var yfi/woofy
     ILpDepositer public lpDepositer =
         ILpDepositer(0x26E1A0d851CF28E697870e1b7F053B605C8b060F);
-    uint256 dustThreshold = 1e15;
+    uint256 dustThreshold = 1e14;
 
     bool internal forceHarvestTriggerOnce; // only set this to true externally when we want to trigger our keepers to harvest for us
     uint256 public minHarvestCredit; // if we hit this amount of credit, harvest the strategy
@@ -128,7 +128,7 @@ contract Strategy is BaseStrategy {
         address _otcSwapper
     ) public BaseStrategy(_vault) {
         _initializeStrat(_name, _otcSwapper);
-        otcSwapper = _otcSwapper;
+        otcSwapper = IOTCSwapper(_otcSwapper);
     }
 
     // this is called by our original strategy, as well as any clones
@@ -195,7 +195,7 @@ contract Strategy is BaseStrategy {
         );
 
         // balance of woofy is already in yfi
-        uint256 balanceOfWoofyinYfi = amountWoofy.add(woofy.balanceOfWoofy());
+        uint256 balanceOfWoofyinYfi = amountWoofy.add(balanceOfWoofy());
 
         // look at our staked tokens and any free tokens sitting in the strategy
         return balanceOfWoofyinYfi.add(balanceOfWant()).add(amountYfi);
@@ -277,21 +277,45 @@ contract Strategy is BaseStrategy {
         forceHarvestTriggerOnce = false;
     }
 
+    function sqrt(uint y) internal pure returns (uint z) {
+        if (y > 3) {
+            z = y;
+            uint x = y / 2 + 1;
+            while (x < z) {
+                z = x;
+                x = (y / x + x) / 2;
+            }
+        } else if (y != 0) {
+            z = 1;
+        }
+    }
+
     //you need to swap token of amount to arb the peg
     function neededToArbPeg()
         public
         view
         returns (address token, uint256 amount)
     {
+
         uint256 yfiInLp = yfi.balanceOf(lpToken);
         uint256 woofyInLp = woofy.balanceOf(lpToken);
 
+        //if arb is less than fees then no arb
+        if(yfiInLp.mul(1_000) > woofyInLp.mul(999) && woofyInLp.mul(1_000) > yfiInLp.mul(999) ){
+            
+            return (address(yfi), 0);
+        }
+
+        //sqrt(yfiInLp*woofyInLp)-smaller
+        //this should return to peg ignoring fees
+        uint256 sq = sqrt(yfiInLp.mul(woofyInLp));
+
         //if lp is unbalanced we need to arb it back to peg. if too much yfi in lp buy yfi. if too much woofy buy woofy
         if (yfiInLp > woofyInLp) {
-            amount = (yfiB - woofyB) / 2;
+            amount = sq.sub(woofyInLp);
             token = address(woofy);
         } else {
-            amount = (woofyB - yfiB) / 2;
+            amount = sq.sub(yfiInLp);
             token = address(yfi);
         }
     }
@@ -303,7 +327,7 @@ contract Strategy is BaseStrategy {
         returns (uint256 newBalance)
     {
         //the token in is opposite of what we want out
-        address tokenIn = token == address(yfi) ? address(woofy) : address(yfi);
+        address tokenIn = address(token) == address(yfi) ? address(woofy) : address(yfi);
 
         newBalance = token.balanceOf(address(this));
         //the balance of what we need to provide the swapper
@@ -321,7 +345,7 @@ contract Strategy is BaseStrategy {
 
         //if the amount to swap is tiny dont bother
         if (amount > dustThreshold) {
-            otcSwapper.trade(tokenIn, Math.min(desiredYfi, yfiInTrader));
+            otcSwapper.trade(tokenIn, Math.min(amount, tokenInSwapper));
             newBalance = token.balanceOf(address(this));
         }
     }
@@ -347,14 +371,14 @@ contract Strategy is BaseStrategy {
 
         if (token == address(yfi)) {
             if (yfiBalance < amount) {
-                yfiBalance = GetFromOTC(address(yfi), amount - yfiBalance);
+                yfiBalance = GetFromOTC(yfi, amount - yfiBalance);
             }
 
             toBuy = Math.min(amount, yfiBalance);
         } else if (token == address(woofy)) {
             if (woofyBalance < amount) {
                 woofyBalance = GetFromOTC(
-                    address(woofy),
+                    woofy,
                     amount - woofyBalance
                 );
             }
@@ -382,20 +406,13 @@ contract Strategy is BaseStrategy {
             return;
         }
 
-        arbThePeg();
+        _arbThePeg();
 
         uint256 yfiInLp = yfi.balanceOf(lpToken);
         uint256 woofyInLp = woofy.balanceOf(lpToken);
 
         if(yfiInLp.mul(1_000) < woofyInLp.mul(lpSlippage)  || woofyInLp.mul(1_000) < yfiInLp.mul(lpSlippage)){
             //if the pool is still imbalanced after the arb dont do anything
-            return;
-        }
-
-        (address token, uint256 amount) = neededToArbPeg();
-
-        //if it is still a bad price after arbing the peg dont do anything
-        if (amount > dustThreshold) {
             return;
         }
 
@@ -502,9 +519,9 @@ contract Strategy is BaseStrategy {
             //now we swap if we can at a profit
             uint256 yfiInLp = yfi.balanceOf(lpToken);
             uint256 woofyInLp = woofy.balanceOf(lpToken);
-            if(yfiInLp>woofyInLp){
+            if(yfiInLp>woofyInLp.add(dustThreshold)){
                 //we can arb
-                arbThePeg();
+                _arbThePeg();
             }
 
             balanceOfYfi = want.balanceOf(address(this));

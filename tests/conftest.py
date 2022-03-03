@@ -12,7 +12,7 @@ def isolation(fn_isolation):
 # this is the name we want to give our strategy
 @pytest.fixture(scope="module")
 def strategy_name():
-    strategy_name = "boo_Xboo_veLp_Solidex"
+    strategy_name = "yfi_woofy_ve_solidex"
     yield strategy_name
 
 
@@ -40,16 +40,26 @@ def solid():
 def wbtc():
     yield Contract("0x321162Cd933E2Be498Cd2267a90534A804051b11")
 
-
 @pytest.fixture(scope="module")
 def dai():
     yield Contract("0x8D11eC38a3EB5E956B052f67Da8Bdc9bef8Abf3E")
-
 
 @pytest.fixture(scope="module")
 def usdc():
     yield Contract("0x04068DA6C83AFCFA0e13ba15A6696662335D5B75")
 
+
+@pytest.fixture(scope="module")
+def yfi():
+    yield Contract("0x29b0Da86e484E1C0029B56e817912d778aC0EC69")
+
+@pytest.fixture(scope="module")
+def woofy():
+    yield Contract("0xD0660cD418a64a1d44E9214ad8e459324D8157f1")
+
+@pytest.fixture(scope="module")
+def yfi_woofy_lp():
+    yield Contract("0x4b3a172283ecB7d07AB881a9443d38cB1c98F4d0")
 
 @pytest.fixture(scope="module")
 def mim():
@@ -73,22 +83,29 @@ def lpdepositer():
 
 # Define relevant tokens and contracts in this section
 @pytest.fixture(scope="module")
-def token(boo):
-    yield boo
+def token(yfi):
+    yield yfi
 
 
 @pytest.fixture(scope="module")
 def whale(accounts):
     # Update this with a large holder of your want token (the largest EOA holder of LP)
     whale = accounts.at(
-        "0x95478C4F7D22D1048F46100001c2C69D2BA57380", force=True)
+        "0x0845c0bFe75691B1e21b24351aAc581a7FB6b7Df", force=True)
     yield whale
 
+
+@pytest.fixture(scope="module")
+def woofy_whale(accounts):
+    # Update this with a large holder of your want token (the largest EOA holder of LP)
+    whale = accounts.at(
+        "0xC0E2830724C946a6748dDFE09753613cd38f6767", force=True)
+    yield whale
 
 # this is the amount of funds we have our whale deposit. adjust this as needed based on their wallet balance
 @pytest.fixture(scope="module")
 def amount(token):  # use today's exchange rates to have similar $$ amounts
-    amount = 5000 * (10 ** token.decimals())
+    amount = 10 * (10 ** token.decimals())
     yield amount
 
 
@@ -171,6 +188,13 @@ def trade_factory():
     yield Contract("0xD3f89C21719Ec5961a3E6B0f9bBf9F9b4180E9e9")
 
 
+@pytest.fixture
+def woofy_filled_swapper(swapper, woofy_whale, woofy):
+    
+    woofy.approve(swapper, 2**256-1, {'from': woofy_whale})
+    swapper.provideLiquidity(woofy, 50e18, {'from': woofy_whale})
+    yield swapper
+
 @pytest.fixture(scope="module")
 def management(accounts):
     yield accounts[3]
@@ -210,12 +234,18 @@ def vault(pm, gov, rewards, guardian, management, token, chain):
 #     vault = Contract("0x497590d2d57f05cf8B42A36062fA53eBAe283498")
 #     yield vault
 
+@pytest.fixture(scope="function")
+def swapper(OTCTrader, strategist):
+    yield strategist.deploy(OTCTrader)
+
+
 
 # replace the first value with the name of your strategy
 @pytest.fixture(scope="function")
 def strategy(
     Strategy,
     strategist,
+    swapper,
     keeper,
     vault,
     gov,
@@ -227,7 +257,8 @@ def strategy(
     strategy = strategist.deploy(
         Strategy,
         vault,
-        strategy_name
+        strategy_name,
+        swapper
 
     )
     trade_factory.grantRole(

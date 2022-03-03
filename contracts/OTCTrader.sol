@@ -10,7 +10,7 @@ import "@openzeppelin/contracts/math/Math.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
 //contract to swap woofy for yfi. 1-1
-contract OTCSwapper is Ownable {
+contract OTCTrader is Ownable {
     using SafeERC20 for IERC20;
     using Address for address;
     using SafeMath for uint256;
@@ -41,10 +41,10 @@ contract OTCSwapper is Ownable {
     function trade(address _tokenIn, uint256 _amount) public locked {
         require(_tokenIn == yfi || _tokenIn == woofy, "token not allowed");
 
-        IERC20 tokenOut = tokenIn == yfi ? IERC20(woofy) : IERC20(yfi);
+        IERC20 tokenOut = _tokenIn == yfi ? IERC20(woofy) : IERC20(yfi);
         IERC20 tokenIn = IERC20(_tokenIn);
 
-        uitn256 balanceOfOut = tokenOut.balanceOf(address(this));
+        uint256 balanceOfOut = tokenOut.balanceOf(address(this));
 
         require(balanceOfOut >= _amount, "not enough liquidity");
 
