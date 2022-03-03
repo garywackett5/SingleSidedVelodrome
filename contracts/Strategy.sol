@@ -48,16 +48,16 @@ interface ISolidlyRouter {
     ) external view returns (uint256 amountA, uint256 amountB);
 }
 
-// boo:xboo ratios, enter = "Locks Boo and mints xBoo", leave = "Unlocks the staked + gained Boo, and burns xBoo"
-interface IXboo is IERC20 {
-    function xBOOForBOO(uint256) external view returns (uint256);
+// // boo:xboo ratios, enter = "Locks Boo and mints xBoo", leave = "Unlocks the staked + gained Boo, and burns xBoo"
+// interface IXboo is IERC20 {
+//     function xBOOForBOO(uint256) external view returns (uint256);
 
-    function BOOForxBOO(uint256) external view returns (uint256);
+//     function BOOForxBOO(uint256) external view returns (uint256);
 
-    function enter(uint256) external;
+//     function enter(uint256) external;
 
-    function leave(uint256) external;
-}
+//     function leave(uint256) external;
+// }
 
 interface ITradeFactory {
     function enable(address, address) external;
@@ -92,10 +92,10 @@ contract Strategy is BaseStrategy {
     address public tradeFactory =
         address(0xD3f89C21719Ec5961a3E6B0f9bBf9F9b4180E9e9);
 
-    IERC20 internal constant boo =
-        IERC20(0x841FAD6EAe12c286d1Fd18d1d525DFfA75C7EFFE);
-    IXboo internal constant xboo =
-        IXboo(0xa48d959AE2E88f1dAA7D5F611E01908106dE7598);
+    IERC20 internal constant yfi =
+        IERC20(0x29b0Da86e484E1C0029B56e817912d778aC0EC69);
+    IERC20 internal constant woofy =
+        IERC20(0xD0660cD418a64a1d44E9214ad8e459324D8157f1);
 
     IERC20 internal constant sex =
         IERC20(0xD31Fcd1f7Ba190dBc75354046F6024A9b86014d7);
@@ -106,7 +106,7 @@ contract Strategy is BaseStrategy {
 
     string internal stratName; // we use this for our strategy's name on cloning
     address public lpToken =
-        address(0x5804F6C40f44cF7593F73cf3aa16F7037213A623);
+        address(0xD0660cD418a64a1d44E9214ad8e459324D8157f1);
     ILpDepositer public lpDepositer =
         ILpDepositer(0x26E1A0d851CF28E697870e1b7F053B605C8b060F);
 
@@ -141,9 +141,9 @@ contract Strategy is BaseStrategy {
         // add approvals on all tokens
         IERC20(lpToken).approve(address(lpDepositer), type(uint256).max);
         IERC20(lpToken).approve(address(solidlyRouter), type(uint256).max);
-        xboo.approve(address(solidlyRouter), type(uint256).max);
-        boo.approve(address(xboo), type(uint256).max);
-        boo.approve(address(solidlyRouter), type(uint256).max);
+        woofy.approve(address(solidlyRouter), type(uint256).max);
+        // boo.approve(address(xboo), type(uint256).max);
+        yfi.approve(address(solidlyRouter), type(uint256).max);
     }
 
     /* ========== VIEWS ========== */
@@ -152,17 +152,18 @@ contract Strategy is BaseStrategy {
         return stratName;
     }
 
-    // balance of boo in strat - should be zero most of the time
+    // balance of yfi in strat - should be zero most of the time
     function balanceOfWant() public view returns (uint256) {
         return want.balanceOf(address(this));
     }
 
-    function balanceOfXbooInWant(uint256 xbooAmount)
+    // redundant function for yfi and woofy
+    function balanceOfWoofyInWant(uint256 woofyAmount)
         public
         view
         returns (uint256)
     {
-        return xboo.xBOOForBOO(xbooAmount);
+        return woofyAmount;
     }
 
     function balanceOfLPStaked() public view returns (uint256) {
@@ -172,12 +173,12 @@ contract Strategy is BaseStrategy {
     function balanceOfConstituents(uint256 liquidity)
         public
         view
-        returns (uint256 amountBoo, uint256 amountXBoo)
+        returns (uint256 amountYfi, uint256 amountWoofy)
     {
-        (amountBoo, amountXBoo) = ISolidlyRouter(solidlyRouter)
+        (amountYfi, amountWoofy) = ISolidlyRouter(solidlyRouter)
             .quoteRemoveLiquidity(
-                address(boo),
-                address(xboo),
+                address(yfi),
+                address(woofy),
                 false,
                 liquidity
             );
@@ -188,16 +189,16 @@ contract Strategy is BaseStrategy {
             IERC20(lpToken).balanceOf(address(this))
         );
 
-        (uint256 amountBoo, uint256 amountXBoo) = balanceOfConstituents(
+        (uint256 amountYfi, uint256 amountWoofy) = balanceOfConstituents(
             lpTokens
         );
 
-        uint256 balanceOfxBooinBoo = balanceOfXbooInWant(
-            amountXBoo.add(xboo.balanceOf(address(this)))
+        // balance of woofy is already in yfi
+        uint256 balanceOfWoofyinYfi = amountWoofy.add(woofy.balanceOf(address(this)))
         );
 
         // look at our staked tokens and any free tokens sitting in the strategy
-        return balanceOfxBooinBoo.add(balanceOfWant()).add(amountBoo);
+        return balanceOfWoofyinYfi.add(balanceOfWant()).add(amountYfi);
     }
 
     function _setUpTradeFactory() internal {
@@ -283,25 +284,25 @@ contract Strategy is BaseStrategy {
         // send all of our want tokens to be deposited
         uint256 toInvest = balanceOfWant();
         // stake only if we have something to stake
-        // dont bother for less than 0.1 boo
+        // dont bother for less than 0.1 boo, DO WE NEED TO CHANGE THIS AMOUNT FOR YFI TO 1e14???
         if (toInvest > 1e17) {
-            uint256 booB = boo.balanceOf(lpToken);
-            uint256 xbooB = xboo.balanceOf(lpToken);
+            uint256 yfiB = yfi.balanceOf(lpToken);
+            uint256 woofyB = woofy.balanceOf(lpToken);
 
-            //ratio we need of boo to xboo to lp
-            uint256 ratio_lp = booB.mul(1e18).div(xbooB);
+            // ratio we need of yfi to woofy to lp
+            uint256 ratio_lp = yfiB.mul(1e18).div(woofyB);
 
-            //ratio boo to xboo in xBoo
-            uint256 ratio_xboo = xboo.xBOOForBOO(1e18);
+            // ratio boo to xboo in xboo - DO WE STILL NEED THIS???
+            // uint256 ratio_xboo = xboo.xBOOForBOO(1e18);
 
-            //we compare ratios to make sure there isnt too much slippage. only care if xboo is overvalued
+            // we compare ratios to make sure there isnt too much slippage. only care if xboo is overvalued
 
-            //allow 0.5% slippage
-            if (ratio_lp < ratio_xboo.mul(lpSlippage).div(1000)) {
-                //dont do anything because we would be lping into the lp at a bad price
-                return;
+            // allow 0.5% slippage - DO WE STILL NEED THIS???
+            // if (ratio_lp < ratio_xboo.mul(lpSlippage).div(1000)) {
+                // dont do anything because we would be lping into the lp at a bad price
+                // return;
             }
-            //amount to swap is:
+            // amount to swap is:
             // B0 * Rxboo / (Rlp + Rxboo)
             uint256 numerator = toInvest.mul(ratio_xboo);
             uint256 denom = ratio_xboo.add(ratio_lp);
@@ -309,15 +310,15 @@ contract Strategy is BaseStrategy {
             uint256 newInvest = (numerator.div(denom)).sub(1e6); // remove a bit incase of rounding error
 
             // deposit our boo into xboo
-            xboo.enter(newInvest);
+            // xboo.enter(newInvest);
 
             // deposit into lp
             ISolidlyRouter(solidlyRouter).addLiquidity(
-                address(boo),
-                address(xboo),
+                address(yfi),
+                address(woofy),
                 false,
-                boo.balanceOf(address(this)),
-                xboo.balanceOf(address(this)),
+                yfi.balanceOf(address(this)),
+                woofy.balanceOf(address(this)),
                 0,
                 0,
                 address(this),
@@ -332,18 +333,18 @@ contract Strategy is BaseStrategy {
         }
     }
 
-    //returns lp tokens needed to get that amount of boo
-    function booToLpTokens(uint256 amountOfBooWeWant) public returns (uint256) {
-        //amount of boo and xboo for 1 lp token
-        (uint256 amountBooPerLp, uint256 amountXBoo) = balanceOfConstituents(
+    //returns lp tokens needed to get that amount of yfi
+    function yfiToLpTokens(uint256 amountOfYfiWeWant) public returns (uint256) {
+        //amount of yfi and woofy for 1 lp token
+        (uint256 amountYfiPerLp, uint256 amountWoofy) = balanceOfConstituents(
             1e18
         );
 
         //1 lp token is this amoubt of boo
-        amountBooPerLp = amountBooPerLp.add(xboo.xBOOForBOO(amountXBoo));
+        amountBooPerLp = amountBooPerLp.add(xboo.xBOOForBOO(amountWoofy));
 
-        uint256 lpTokensWeNeed = amountOfBooWeWant.mul(1e18).div(
-            amountBooPerLp
+        uint256 lpTokensWeNeed = amountOfYfiWeWant.mul(1e18).div(
+            amountYfiPerLp
         );
 
         return lpTokensWeNeed;
@@ -354,18 +355,18 @@ contract Strategy is BaseStrategy {
         override
         returns (uint256 _liquidatedAmount, uint256 _loss)
     {
-        //if we have loose xboo. liquidated it
-        xboo.leave(xboo.balanceOf(address(this)));
+        // if we have loose woofy. liquidated it
+        // xboo.leave(xboo.balanceOf(address(this)));
 
-        uint256 balanceOfBoo = want.balanceOf(address(this));
+        uint256 balanceOfYfi = want.balanceOf(address(this));
 
-        // if we need more boo than is already loose in the contract
-        if (balanceOfBoo < _amountNeeded) {
-            // boo needed beyond any boo that is already loose in the contract
-            uint256 amountToFree = _amountNeeded.sub(balanceOfBoo);
+        // if we need more yfi than is already loose in the contract
+        if (balanceOfYfi < _amountNeeded) {
+            // yfi needed beyond any yfi that is already loose in the contract
+            uint256 amountToFree = _amountNeeded.sub(balanceOfYfi);
 
             // converts this amount into lpTokens
-            uint256 lpTokensNeeded = booToLpTokens(amountToFree);
+            uint256 lpTokensNeeded = yfiToLpTokens(amountToFree);
 
             uint256 balanceOfLpTokens = IERC20(lpToken).balanceOf(
                 address(this)
@@ -385,11 +386,11 @@ contract Strategy is BaseStrategy {
                 balanceOfLpTokens = IERC20(lpToken).balanceOf(address(this));
             }
 
-            (uint256 amountBoo, uint256 amountxBoo) = ISolidlyRouter(
+            (uint256 amountYfi, uint256 amountWoofy) = ISolidlyRouter(
                 solidlyRouter
             ).removeLiquidity(
-                    address(boo),
-                    address(xboo),
+                    address(yfi),
+                    address(woofy),
                     false,
                     Math.min(lpTokensNeeded, balanceOfLpTokens),
                     0,
@@ -398,7 +399,7 @@ contract Strategy is BaseStrategy {
                     type(uint256).max
                 );
 
-            xboo.leave(xboo.balanceOf(address(this)));
+            // xboo.leave(xboo.balanceOf(address(this)));
 
             _liquidatedAmount = Math.min(
                 want.balanceOf(address(this)),
@@ -416,8 +417,8 @@ contract Strategy is BaseStrategy {
     function liquidateAllPositions() internal override returns (uint256) {
         lpDepositer.withdraw(lpToken, balanceOfLPStaked());
         ISolidlyRouter(solidlyRouter).removeLiquidity(
-            address(boo),
-            address(xboo),
+            address(yfi),
+            address(woofy),
             false,
             IERC20(lpToken).balanceOf(address(this)),
             0,
@@ -425,7 +426,7 @@ contract Strategy is BaseStrategy {
             address(this),
             type(uint256).max
         );
-        xboo.leave(xboo.balanceOf(address(this)));
+        // xboo.leave(xboo.balanceOf(address(this)));
 
         return balanceOfWant();
     }
@@ -441,11 +442,11 @@ contract Strategy is BaseStrategy {
             IERC20(lpToken).safeTransfer(_newStrategy, lpBalance);
         }
 
-        uint256 xbooBalance = xboo.balanceOf(address(this));
+        uint256 woofyBalance = woofy.balanceOf(address(this));
 
-        if (xbooBalance > 0) {
-            // send our total balance of xboo to the new strategy
-            xboo.transfer(_newStrategy, xbooBalance);
+        if (woofyBalance > 0) {
+            // send our total balance of woofy to the new strategy
+            woofy.transfer(_newStrategy, woofyBalance);
         }
     }
 
@@ -463,7 +464,7 @@ contract Strategy is BaseStrategy {
         returns (address[] memory)
     {}
 
-    // our main trigger is regarding our DCA since there is low liquidity for our emissionToken
+    // NOT TRUE ANYMORE... our main trigger is regarding our DCA since there is low liquidity for our emissionToken
     function harvestTrigger(uint256 callCostinEth)
         public
         view
@@ -529,7 +530,7 @@ contract Strategy is BaseStrategy {
     ///@notice This allows us to manually harvest with our keeper as needed
     function setForceHarvestTriggerOnce(bool _forceHarvestTriggerOnce)
         external
-        onlyAuthorized
+        onlyEmergencyAuthorized
     {
         forceHarvestTriggerOnce = _forceHarvestTriggerOnce;
     }
@@ -537,22 +538,22 @@ contract Strategy is BaseStrategy {
     ///@notice When our strategy has this much credit, harvestTrigger will be true.
     function setMinHarvestCredit(uint256 _minHarvestCredit)
         external
-        onlyAuthorized
+        onlyEmergencyAuthorized
     {
         minHarvestCredit = _minHarvestCredit;
     }
 
     ///@notice When our strategy has this much credit, harvestTrigger will be true.
-    function setRealiseLosses(bool _realiseLoosses) external onlyAuthorized {
+    function setRealiseLosses(bool _realiseLoosses) external onlyEmergencyAuthorized {
         realiseLosses = _realiseLoosses;
     }
 
     ///@notice When our strategy has this much credit, harvestTrigger will be true.
-    function setLpSlippage(uint256 _slippage) external onlyAuthorized {
+    function setLpSlippage(uint256 _slippage) external onlyEmergencyAuthorized {
         lpSlippage = _slippage;
     }
 
-    function setDepositerAvoid(bool _avoid) external onlyAuthorized {
+    function setDepositerAvoid(bool _avoid) external onlyEmergencyAuthorized {
         depositerAvoid = _avoid;
     }
 }
