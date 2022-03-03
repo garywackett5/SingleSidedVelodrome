@@ -118,6 +118,8 @@ contract Strategy is BaseStrategy {
     uint256 public minHarvestCredit; // if we hit this amount of credit, harvest the strategy
     IOTCSwapper public otcSwapper;
 
+    bool public takeLosses;
+
     /* ========== CONSTRUCTOR ========== */
 
     constructor(
@@ -163,15 +165,6 @@ contract Strategy is BaseStrategy {
 
     function balanceOfWoofy() public view returns (uint256) {
         return woofy.balanceOf(address(this));
-    }
-
-    // redundant function for yfi and woofy
-    function balanceOfWoofyInWant(uint256 woofyAmount)
-        public
-        view
-        returns (uint256)
-    {
-        return woofyAmount;
     }
 
     function balanceOfLPStaked() public view returns (uint256) {
@@ -302,6 +295,7 @@ contract Strategy is BaseStrategy {
             token = address(yfi);
         }
     }
+
 
     //get token of amount from otc
     function GetFromOTC(IERC20 token, uint256 amount)
@@ -438,7 +432,7 @@ contract Strategy is BaseStrategy {
         );
 
         //1 lp token is this amoubt of boo
-        amountBooPerLp = amountBooPerLp.add(xboo.xBOOForBOO(amountWoofy));
+        amountYfiPerLp = amountYfiPerLp.add(amountWoofy);
 
         uint256 lpTokensWeNeed = amountOfYfiWeWant.mul(1e18).div(
             amountYfiPerLp
@@ -452,9 +446,7 @@ contract Strategy is BaseStrategy {
         override
         returns (uint256 _liquidatedAmount, uint256 _loss)
     {
-        // if we have loose woofy. liquidated it
-        // xboo.leave(xboo.balanceOf(address(this)));
-
+        
         uint256 balanceOfYfi = want.balanceOf(address(this));
 
         // if we need more yfi than is already loose in the contract
@@ -483,7 +475,7 @@ contract Strategy is BaseStrategy {
                 balanceOfLpTokens = IERC20(lpToken).balanceOf(address(this));
             }
 
-            (uint256 amountYfi, uint256 amountWoofy) = ISolidlyRouter(
+           ISolidlyRouter(
                 solidlyRouter
             ).removeLiquidity(
                     address(yfi),
@@ -495,11 +487,25 @@ contract Strategy is BaseStrategy {
                     address(this),
                     type(uint256).max
                 );
+            //now we have a bunch of yfi and woofy
 
-            // xboo.leave(xboo.balanceOf(address(this)));
+            //now we swap if we can at a profit
+            uint256 yfiInLp = yfi.balanceOf(lpToken);
+            uint256 woofyInLp = woofy.balanceOf(lpToken);
+            if(yfiInLp>woofyInLp){
+                //we can arb
+                arbThePeg();
+            }
+
+            balanceOfYfi = want.balanceOf(address(this));
+            if(balanceOfYfi < _amountNeeded){
+                balanceOfYfi = GetFromOTC(yfi,_amountNeeded - balanceOfYfi );
+            } 
+
+            
 
             _liquidatedAmount = Math.min(
-                want.balanceOf(address(this)),
+               balanceOfYfi,
                 _amountNeeded
             );
 
@@ -523,7 +529,12 @@ contract Strategy is BaseStrategy {
             address(this),
             type(uint256).max
         );
-        // xboo.leave(xboo.balanceOf(address(this)));
+        GetFromOTC(yfi, type(uint256).max); //swap all we can
+
+        //if we have woofy left revert
+        if(!takeLosses){
+            require(balanceOfWoofy() == 0);
+        }
 
         return balanceOfWant();
     }
@@ -610,6 +621,10 @@ contract Strategy is BaseStrategy {
 
     function updateOTCTrader(address _trader) external onlyVaultManagers {
         _setupOTCTrader(_trader);
+    }
+
+    function setTakeLosses(bool _takeLosses) external onlyVaultManagers {
+        takeLosses = _takeLosses;
     }
 
     function _setupOTCTrader(address _trader) internal {
