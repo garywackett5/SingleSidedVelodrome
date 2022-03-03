@@ -46,18 +46,17 @@ interface ISolidlyRouter {
         bool stable,
         uint256 liquidity
     ) external view returns (uint256 amountA, uint256 amountB);
+
+    function swapExactTokensForTokensSimple(
+        uint256 amountIn,
+        uint256 amountOutMin,
+        address tokenFrom,
+        address tokenTo,
+        bool stable,
+        address to,
+        uint256 deadline
+    ) external returns (uint256[] memory amounts);
 }
-
-// // boo:xboo ratios, enter = "Locks Boo and mints xBoo", leave = "Unlocks the staked + gained Boo, and burns xBoo"
-// interface IXboo is IERC20 {
-//     function xBOOForBOO(uint256) external view returns (uint256);
-
-//     function BOOForxBOO(uint256) external view returns (uint256);
-
-//     function enter(uint256) external;
-
-//     function leave(uint256) external;
-// }
 
 interface ITradeFactory {
     function enable(address, address) external;
@@ -74,6 +73,10 @@ interface ILpDepositer {
         returns (uint256);
 
     function getReward(address[] memory lps) external;
+}
+
+interface IOTCSwapper {
+    function trade(address _tokenIn, uint256 _amount) external;
 }
 
 contract Strategy is BaseStrategy {
@@ -106,28 +109,28 @@ contract Strategy is BaseStrategy {
 
     string internal stratName; // we use this for our strategy's name on cloning
     address public lpToken =
-        address(0xD0660cD418a64a1d44E9214ad8e459324D8157f1);
+        address(0xD0660cD418a64a1d44E9214ad8e459324D8157f1); //var yfi/woofy
     ILpDepositer public lpDepositer =
         ILpDepositer(0x26E1A0d851CF28E697870e1b7F053B605C8b060F);
+    uint256 dustThreshold = 1e15;
 
     bool internal forceHarvestTriggerOnce; // only set this to true externally when we want to trigger our keepers to harvest for us
     uint256 public minHarvestCredit; // if we hit this amount of credit, harvest the strategy
+    IOTCSwapper public otcSwapper;
 
     /* ========== CONSTRUCTOR ========== */
 
-    constructor(address _vault, string memory _name)
-        public
-        BaseStrategy(_vault)
-    {
-        _initializeStrat(_name);
+    constructor(
+        address _vault,
+        string memory _name,
+        address _otcSwapper
+    ) public BaseStrategy(_vault) {
+        _initializeStrat(_name, _otcSwapper);
+        otcSwapper = _otcSwapper;
     }
 
-    /* ========== CLONING ========== */
-
-    event Cloned(address indexed clone);
-
     // this is called by our original strategy, as well as any clones
-    function _initializeStrat(string memory _name) internal {
+    function _initializeStrat(string memory _name, address _trader) internal {
         // initialize variables
         maxReportDelay = 43200; // 1/2 day in seconds, if we hit this then harvestTrigger = True
         healthCheck = address(0xf13Cd6887C62B5beC145e30c38c4938c5E627fe0); // Fantom common health check
@@ -142,8 +145,9 @@ contract Strategy is BaseStrategy {
         IERC20(lpToken).approve(address(lpDepositer), type(uint256).max);
         IERC20(lpToken).approve(address(solidlyRouter), type(uint256).max);
         woofy.approve(address(solidlyRouter), type(uint256).max);
-        // boo.approve(address(xboo), type(uint256).max);
         yfi.approve(address(solidlyRouter), type(uint256).max);
+
+        _setupOTCTrader(_trader);
     }
 
     /* ========== VIEWS ========== */
@@ -155,6 +159,10 @@ contract Strategy is BaseStrategy {
     // balance of yfi in strat - should be zero most of the time
     function balanceOfWant() public view returns (uint256) {
         return want.balanceOf(address(this));
+    }
+
+    function balanceOfWoofy() public view returns (uint256) {
+        return woofy.balanceOf(address(this));
     }
 
     // redundant function for yfi and woofy
@@ -194,8 +202,7 @@ contract Strategy is BaseStrategy {
         );
 
         // balance of woofy is already in yfi
-        uint256 balanceOfWoofyinYfi = amountWoofy.add(woofy.balanceOf(address(this)))
-        );
+        uint256 balanceOfWoofyinYfi = amountWoofy.add(woofy.balanceOfWoofy());
 
         // look at our staked tokens and any free tokens sitting in the strategy
         return balanceOfWoofyinYfi.add(balanceOfWant()).add(amountYfi);
@@ -277,60 +284,150 @@ contract Strategy is BaseStrategy {
         forceHarvestTriggerOnce = false;
     }
 
+    //you need to swap token of amount to arb the peg
+    function neededToArbPeg()
+        public
+        view
+        returns (address token, uint256 amount)
+    {
+        uint256 yfiInLp = yfi.balanceOf(lpToken);
+        uint256 woofyInLp = woofy.balanceOf(lpToken);
+
+        //if lp is unbalanced we need to arb it back to peg. if too much yfi in lp buy yfi. if too much woofy buy woofy
+        if (yfiInLp > woofyInLp) {
+            amount = (yfiB - woofyB) / 2;
+            token = address(woofy);
+        } else {
+            amount = (woofyB - yfiB) / 2;
+            token = address(yfi);
+        }
+    }
+
+    //get token of amount from otc
+    function GetFromOTC(IERC20 token, uint256 amount)
+        internal
+        returns (uint256 newBalance)
+    {
+        //the token in is opposite of what we want out
+        address tokenIn = token == address(yfi) ? address(woofy) : address(yfi);
+
+        newBalance = token.balanceOf(address(this));
+        //the balance of what we need to provide the swapper
+        uint256 balanceIn = IERC20(tokenIn).balanceOf(address(this));
+        uint256 tokenInSwapper = token.balanceOf(address(otcSwapper));
+
+        //if there isnt enough in the swapper, adjust what we ask for
+        if (tokenInSwapper < amount) {
+            amount = tokenInSwapper;
+        }
+        //if we cant afford to provide the tokenin for the amount we want, adjust what we ask for
+        if (balanceIn < amount) {
+            amount = balanceIn;
+        }
+
+        //if the amount to swap is tiny dont bother
+        if (amount > dustThreshold) {
+            otcSwapper.trade(tokenIn, Math.min(desiredYfi, yfiInTrader));
+            newBalance = token.balanceOf(address(this));
+        }
+    }
+
+    function arbThePeg() external onlyEmergencyAuthorized {
+        _arbThePeg();
+    }
+
+    function _arbThePeg() internal {
+        (address token, uint256 amount) = neededToArbPeg();
+        address tokenOut = token == address(yfi)
+            ? address(woofy)
+            : address(yfi);
+
+        if (amount < dustThreshold) {
+            return;
+        }
+
+        uint256 yfiBalance = balanceOfWant();
+        uint256 woofyBalance = balanceOfWoofy();
+
+        uint256 toBuy;
+
+        if (token == address(yfi)) {
+            if (yfiBalance < amount) {
+                yfiBalance = GetFromOTC(address(yfi), amount - yfiBalance);
+            }
+
+            toBuy = Math.min(amount, yfiBalance);
+        } else if (token == address(woofy)) {
+            if (woofyBalance < amount) {
+                woofyBalance = GetFromOTC(
+                    address(woofy),
+                    amount - woofyBalance
+                );
+            }
+
+            toBuy = Math.min(amount, woofyBalance);
+        }
+
+        if (toBuy < dustThreshold) {
+            return;
+        }
+
+        ISolidlyRouter(solidlyRouter).swapExactTokensForTokensSimple(
+            toBuy,
+            toBuy,
+            token,
+            tokenOut,
+            false,
+            address(this),
+            type(uint256).max
+        );
+    }
+
     function adjustPosition(uint256 _debtOutstanding) internal override {
         if (emergencyExit) {
             return;
         }
-        // send all of our want tokens to be deposited
-        uint256 toInvest = balanceOfWant();
-        // stake only if we have something to stake
-        // dont bother for less than 0.1 boo, DO WE NEED TO CHANGE THIS AMOUNT FOR YFI TO 1e14???
-        if (toInvest > 1e17) {
-            uint256 yfiB = yfi.balanceOf(lpToken);
-            uint256 woofyB = woofy.balanceOf(lpToken);
 
-            // ratio we need of yfi to woofy to lp
-            uint256 ratio_lp = yfiB.mul(1e18).div(woofyB);
+        arbThePeg();
 
-            // ratio boo to xboo in xboo - DO WE STILL NEED THIS???
-            // uint256 ratio_xboo = xboo.xBOOForBOO(1e18);
+        (address token, uint256 amount) = neededToArbPeg();
 
-            // we compare ratios to make sure there isnt too much slippage. only care if xboo is overvalued
-
-            // allow 0.5% slippage - DO WE STILL NEED THIS???
-            // if (ratio_lp < ratio_xboo.mul(lpSlippage).div(1000)) {
-                // dont do anything because we would be lping into the lp at a bad price
-                // return;
-            }
-            // amount to swap is:
-            // B0 * Rxboo / (Rlp + Rxboo)
-            uint256 numerator = toInvest.mul(ratio_xboo);
-            uint256 denom = ratio_xboo.add(ratio_lp);
-
-            uint256 newInvest = (numerator.div(denom)).sub(1e6); // remove a bit incase of rounding error
-
-            // deposit our boo into xboo
-            // xboo.enter(newInvest);
-
-            // deposit into lp
-            ISolidlyRouter(solidlyRouter).addLiquidity(
-                address(yfi),
-                address(woofy),
-                false,
-                yfi.balanceOf(address(this)),
-                woofy.balanceOf(address(this)),
-                0,
-                0,
-                address(this),
-                2**256 - 1
-            );
-
-            //deposit to lp depositer
-            lpDepositer.deposit(
-                lpToken,
-                IERC20(lpToken).balanceOf(address(this))
-            );
+        if (amount > dustThreshold) {
+            return;
         }
+
+        uint256 yfiBalance = balanceOfWant();
+        uint256 woofyBalance = balanceOfWoofy();
+
+        if (yfiBalance > woofyBalance) {
+            uint256 desiredWoofy = (yfiBalance - woofyBalance) / 2;
+            GetFromOTC(woofy, desiredWoofy);
+        } else {
+            uint256 desiredYfi = (woofyBalance - yfiBalance) / 2;
+            GetFromOTC(yfi, desiredYfi);
+        }
+
+        yfiBalance = balanceOfWant();
+        woofyBalance = balanceOfWoofy();
+
+        if (yfiBalance < dustThreshold || woofyBalance < dustThreshold) {
+            return;
+        }
+
+        ISolidlyRouter(solidlyRouter).addLiquidity(
+            address(yfi),
+            address(woofy),
+            false,
+            yfiBalance,
+            woofyBalance,
+            0,
+            0,
+            address(this),
+            2**256 - 1
+        );
+
+        //deposit to lp depositer
+        lpDepositer.deposit(lpToken, IERC20(lpToken).balanceOf(address(this)));
     }
 
     //returns lp tokens needed to get that amount of yfi
@@ -511,6 +608,22 @@ contract Strategy is BaseStrategy {
         _setUpTradeFactory();
     }
 
+    function updateOTCTrader(address _trader) external onlyVaultManagers {
+        _setupOTCTrader(_trader);
+    }
+
+    function _setupOTCTrader(address _trader) internal {
+        if (address(otcSwapper) != address(0)) {
+            woofy.approve(address(otcSwapper), 0);
+            yfi.approve(address(otcSwapper), 0);
+        }
+
+        otcSwapper = IOTCSwapper(_trader);
+
+        woofy.approve(_trader, type(uint256).max);
+        yfi.approve(_trader, type(uint256).max);
+    }
+
     function removeTradeFactoryPermissions() external onlyEmergencyAuthorized {
         _removeTradeFactoryPermissions();
     }
@@ -544,7 +657,10 @@ contract Strategy is BaseStrategy {
     }
 
     ///@notice When our strategy has this much credit, harvestTrigger will be true.
-    function setRealiseLosses(bool _realiseLoosses) external onlyEmergencyAuthorized {
+    function setRealiseLosses(bool _realiseLoosses)
+        external
+        onlyEmergencyAuthorized
+    {
         realiseLosses = _realiseLoosses;
     }
 
