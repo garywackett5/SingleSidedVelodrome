@@ -384,8 +384,17 @@ contract Strategy is BaseStrategy {
 
         arbThePeg();
 
+        uint256 yfiInLp = yfi.balanceOf(lpToken);
+        uint256 woofyInLp = woofy.balanceOf(lpToken);
+
+        if(yfiInLp.mul(1_000) < woofyInLp.mul(lpSlippage)  || woofyInLp.mul(1_000) < yfiInLp.mul(lpSlippage)){
+            //if the pool is still imbalanced after the arb dont do anything
+            return;
+        }
+
         (address token, uint256 amount) = neededToArbPeg();
 
+        //if it is still a bad price after arbing the peg dont do anything
         if (amount > dustThreshold) {
             return;
         }
@@ -393,6 +402,7 @@ contract Strategy is BaseStrategy {
         uint256 yfiBalance = balanceOfWant();
         uint256 woofyBalance = balanceOfWoofy();
 
+        //need equal yfi and woofy
         if (yfiBalance > woofyBalance) {
             uint256 desiredWoofy = (yfiBalance - woofyBalance) / 2;
             GetFromOTC(woofy, desiredWoofy);
@@ -501,8 +511,6 @@ contract Strategy is BaseStrategy {
             if(balanceOfYfi < _amountNeeded){
                 balanceOfYfi = GetFromOTC(yfi,_amountNeeded - balanceOfYfi );
             } 
-
-            
 
             _liquidatedAmount = Math.min(
                balanceOfYfi,
@@ -686,5 +694,9 @@ contract Strategy is BaseStrategy {
 
     function setDepositerAvoid(bool _avoid) external onlyEmergencyAuthorized {
         depositerAvoid = _avoid;
+    }
+
+    function setDusetThreshold(uint256 _dust) external onlyEmergencyAuthorized {
+        dustThreshold = _dust;
     }
 }
