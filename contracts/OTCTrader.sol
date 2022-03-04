@@ -6,7 +6,6 @@ pragma solidity 0.6.12;
 pragma experimental ABIEncoderV2;
 
 import {SafeERC20, SafeMath, IERC20, Address} from "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
-import "@openzeppelin/contracts/math/Math.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
 //contract to swap woofy for yfi. 1-1
@@ -15,8 +14,8 @@ contract OTCTrader is Ownable {
     using Address for address;
     using SafeMath for uint256;
 
-    address public yfi = address(0x29b0Da86e484E1C0029B56e817912d778aC0EC69);
-    address public woofy = address(0xD0660cD418a64a1d44E9214ad8e459324D8157f1);
+    address internal constant yfi = 0x29b0Da86e484E1C0029B56e817912d778aC0EC69;
+    address internal constant woofy = 0xD0660cD418a64a1d44E9214ad8e459324D8157f1;
     mapping(address => uint256) public deposits; // amount of liquidity user has provided
     mapping(address => bool) public traders; // allow us to limit traders
 
@@ -78,7 +77,7 @@ contract OTCTrader is Ownable {
 
         uint256 balanceBefore = token.balanceOf(address(this));
 
-        require(balanceBefore >= _amount, "not enough liquidty");
+        require(balanceBefore >= _amount, "not enough liquidity");
         uint256 deposited = deposits[msg.sender];
         require(deposited >= _amount, "not enough deposits");
 
