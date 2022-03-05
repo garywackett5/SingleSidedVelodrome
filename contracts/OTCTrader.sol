@@ -19,14 +19,9 @@ contract OTCTrader is Ownable {
     mapping(address => uint256) public deposits; // amount of liquidity user has provided
     mapping(address => bool) public traders; // allow us to limit traders
 
-    bool public open;
 
     constructor() public {
-        open = true;
-    }
-
-    function setOpen(bool _open) external onlyOwner {
-        open = _open;
+        traders[msg.sender] = true;
     }
 
     function setTradePermission(address _trader, bool _allowed)
@@ -37,7 +32,7 @@ contract OTCTrader is Ownable {
     }
 
     //trade between yfi and woofy at 1-1
-    function trade(address _tokenIn, uint256 _amount) public locked {
+    function trade(address _tokenIn, uint256 _amount) public tradersonly {
         require(_tokenIn == yfi || _tokenIn == woofy, "token not allowed");
 
         IERC20 tokenOut = _tokenIn == yfi ? IERC20(woofy) : IERC20(yfi);
@@ -57,8 +52,9 @@ contract OTCTrader is Ownable {
     }
 
     //provide liquidity with yfi or woofy. treated as the same
-    function provideLiquidity(address _token, uint256 _amount) public locked {
+    function provideLiquidity(address _token, uint256 _amount) public tradersonly {
         require(_token == yfi || _token == woofy, "token not allowed");
+        deposits[msg.sender] = deposits[msg.sender].add(_amount);
         IERC20 token = IERC20(_token);
 
         uint256 balanceBefore = token.balanceOf(address(this));
@@ -67,29 +63,31 @@ contract OTCTrader is Ownable {
         uint256 diff = token.balanceOf(address(this)).sub(balanceBefore);
 
         require(diff >= _amount);
-        deposits[msg.sender] = deposits[msg.sender].add(_amount);
+        
     }
 
-    function withdrawLiquidity(address _token, uint256 _amount) public locked {
+    function withdrawLiquidity(address _token, uint256 _amount) public tradersonly {
         require(_token == yfi || _token == woofy, "token not allowed");
+        uint256 deposited = deposits[msg.sender];
+        deposits[msg.sender] = deposited.sub(_amount);
 
         IERC20 token = IERC20(_token);
 
         uint256 balanceBefore = token.balanceOf(address(this));
 
         require(balanceBefore >= _amount, "not enough liquidity");
-        uint256 deposited = deposits[msg.sender];
+        
         require(deposited >= _amount, "not enough deposits");
 
         token.safeTransfer(msg.sender, _amount);
 
-        deposits[msg.sender] = deposited.sub(_amount);
+        
     }
 
-    modifier locked() {
-        if (!open) {
-            require(traders[msg.sender], "traders only");
-        }
+    modifier tradersonly() {
+
+        require(traders[msg.sender], "traders only");
+   
 
         _;
     }

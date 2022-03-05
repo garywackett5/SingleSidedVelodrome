@@ -92,7 +92,7 @@ contract Strategy is BaseStrategy {
     bool public tradesEnabled;
     bool public realiseLosses;
     bool public depositerAvoid;
-    address public tradeFactory = 0xD3f89C21719Ec5961a3E6B0f9bBf9F9b4180E9e9; // Lost in a clone
+    address public tradeFactory = 0xD3f89C21719Ec5961a3E6B0f9bBf9F9b4180E9e9;
 
     IERC20 internal constant yfi =
         IERC20(0x29b0Da86e484E1C0029B56e817912d778aC0EC69);
@@ -104,13 +104,13 @@ contract Strategy is BaseStrategy {
     IERC20 internal constant solid =
         IERC20(0x888EF71766ca594DED1F0FA3AE64eD2941740A20);
 
-    uint256 public lpSlippage = 995; //0.5% slippage allowance // lost in a clone
+    uint256 public lpSlippage = 995; //0.5% slippage allowance 
 
     string internal stratName; // we use this for our strategy's name on cloning
     address public lpToken = 0x4b3a172283ecB7d07AB881a9443d38cB1c98F4d0; //var yfi/woofy // This will disappear in a clone!
     ILpDepositer internal constant lpDepositer =
         ILpDepositer(0x26E1A0d851CF28E697870e1b7F053B605C8b060F);
-    uint256 dustThreshold = 1e14; // review: Several variables will be gone in a clone.
+    uint256 dustThreshold = 1e14; 
 
     bool internal forceHarvestTriggerOnce; // only set this to true externally when we want to trigger our keepers to harvest for us
     uint256 public minHarvestCredit; // if we hit this amount of credit, harvest the strategy
@@ -126,8 +126,6 @@ contract Strategy is BaseStrategy {
         address _otcSwapper
     ) public BaseStrategy(_vault) {
         _initializeStrat(_name, _otcSwapper);
-        // Why this is not part of the initialize?
-        otcSwapper = IOTCSwapper(_otcSwapper);
     }
 
     // this is called by our original strategy, as well as any clones

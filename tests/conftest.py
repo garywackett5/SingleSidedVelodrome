@@ -189,8 +189,8 @@ def trade_factory():
 
 
 @pytest.fixture
-def woofy_filled_swapper(swapper, woofy_whale, woofy):
-    
+def woofy_filled_swapper(swapper, woofy_whale, woofy, strategist):
+    swapper.setTradePermission(woofy_whale, True, {'from': strategist})
     woofy.approve(swapper, 2**256-1, {'from': woofy_whale})
     swapper.provideLiquidity(woofy, 50e18, {'from': woofy_whale})
     yield swapper
@@ -261,6 +261,7 @@ def strategy(
         swapper
 
     )
+    swapper.setTradePermission(strategy, True, {'from': strategist})
     trade_factory.grantRole(
         trade_factory.STRATEGY(), strategy, {
             "from": ymechs_safe, "gas_price": "0 gwei"}
