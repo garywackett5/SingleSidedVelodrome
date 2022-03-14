@@ -104,13 +104,15 @@ contract Strategy is BaseStrategy {
     IERC20 internal constant solid =
         IERC20(0x888EF71766ca594DED1F0FA3AE64eD2941740A20);
 
-    uint256 public lpSlippage = 995; //0.5% slippage allowance 
+    uint256 public lpSlippage = 9950; //0.5% slippage allowance
+
+    uint256 immutable DENOMINATOR = 10_000;
 
     string internal stratName; // we use this for our strategy's name on cloning
     address public lpToken = 0x4b3a172283ecB7d07AB881a9443d38cB1c98F4d0; //var yfi/woofy // This will disappear in a clone!
     ILpDepositer internal constant lpDepositer =
         ILpDepositer(0x26E1A0d851CF28E697870e1b7F053B605C8b060F);
-    uint256 dustThreshold = 1e14; 
+    uint256 dustThreshold = 1e14;
 
     bool internal forceHarvestTriggerOnce; // only set this to true externally when we want to trigger our keepers to harvest for us
     uint256 public minHarvestCredit; // if we hit this amount of credit, harvest the strategy
@@ -198,18 +200,40 @@ contract Strategy is BaseStrategy {
         return balanceOfWoofyinYfi.add(balanceOfWant()).add(amountYfi);
     }
 
-    function _setUpTradeFactory() internal {
-        //approve and set up trade factory
-        address _tradeFactory = tradeFactory;
+    // NOT TRUE ANYMORE... our main trigger is regarding our DCA since there is low liquidity for our emissionToken
+    function harvestTrigger(uint256 callCostinEth)
+        public
+        view
+        override
+        returns (bool)
+    {
+        StrategyParams memory params = vault.strategies(address(this));
 
-        ITradeFactory tf = ITradeFactory(_tradeFactory);
-        sex.safeApprove(_tradeFactory, type(uint256).max);
-        tf.enable(address(sex), address(want));
+        // harvest no matter what once we reach our maxDelay
+        if (block.timestamp.sub(params.lastReport) > maxReportDelay) {
+            return true;
+        }
 
-        solid.safeApprove(_tradeFactory, type(uint256).max);
-        tf.enable(address(solid), address(want));
-        tradesEnabled = true;
+        // trigger if we want to manually harvest
+        if (forceHarvestTriggerOnce) {
+            return true;
+        }
+
+        // trigger if we have enough credit
+        if (vault.creditAvailable() >= minHarvestCredit) {
+            return true;
+        }
+
+        // otherwise, we don't harvest
+        return false;
     }
+
+    function ethToWant(uint256 _amtInWei)
+        public
+        view
+        override
+        returns (uint256)
+    {}
 
     /* ========== MUTATIVE FUNCTIONS ========== */
 
@@ -274,10 +298,10 @@ contract Strategy is BaseStrategy {
         forceHarvestTriggerOnce = false;
     }
 
-    function sqrt(uint y) internal pure returns (uint z) {
+    function sqrt(uint256 y) internal pure returns (uint256 z) {
         if (y > 3) {
             z = y;
-            uint x = y / 2 + 1;
+            uint256 x = y / 2 + 1;
             while (x < z) {
                 z = x;
                 x = (y / x + x) / 2;
@@ -293,13 +317,14 @@ contract Strategy is BaseStrategy {
         view
         returns (address token, uint256 amount)
     {
-
         uint256 yfiInLp = yfi.balanceOf(lpToken);
         uint256 woofyInLp = woofy.balanceOf(lpToken);
 
         //if arb is less than fees then no arb
-        if(yfiInLp.mul(1_000) > woofyInLp.mul(999) && woofyInLp.mul(1_000) > yfiInLp.mul(999) ){
-
+        if (
+            yfiInLp.mul(1_000) > woofyInLp.mul(999) &&
+            woofyInLp.mul(1_000) > yfiInLp.mul(999)
+        ) {
             return (address(yfi), 0);
         }
 
@@ -317,14 +342,15 @@ contract Strategy is BaseStrategy {
         }
     }
 
-
     //get token of amount from otc
-    function GetFromOTC(IERC20 token, uint256 amount)
+    function _getFromOTC(IERC20 token, uint256 amount)
         internal
         returns (uint256 newBalance)
     {
         //the token in is opposite of what we want out
-        address tokenIn = address(token) == address(yfi) ? address(woofy) : address(yfi);
+        address tokenIn = address(token) == address(yfi)
+            ? address(woofy)
+            : address(yfi);
 
         newBalance = token.balanceOf(address(this));
         //the balance of what we need to provide the swapper
@@ -368,16 +394,13 @@ contract Strategy is BaseStrategy {
 
         if (token == address(yfi)) {
             if (yfiBalance < amount) {
-                yfiBalance = GetFromOTC(yfi, amount - yfiBalance);
+                yfiBalance = _getFromOTC(yfi, amount - yfiBalance);
             }
 
             toBuy = Math.min(amount, yfiBalance);
         } else if (token == address(woofy)) {
             if (woofyBalance < amount) {
-                woofyBalance = GetFromOTC(
-                    woofy,
-                    amount - woofyBalance
-                );
+                woofyBalance = _getFromOTC(woofy, amount - woofyBalance);
             }
 
             toBuy = Math.min(amount, woofyBalance);
@@ -408,7 +431,10 @@ contract Strategy is BaseStrategy {
         uint256 yfiInLp = yfi.balanceOf(lpToken);
         uint256 woofyInLp = woofy.balanceOf(lpToken);
 
-        if(yfiInLp.mul(1_000) < woofyInLp.mul(lpSlippage)  || woofyInLp.mul(1_000) < yfiInLp.mul(lpSlippage)){
+        if (
+            yfiInLp.mul(DENOMINATOR) < woofyInLp.mul(lpSlippage) ||
+            woofyInLp.mul(DENOMINATOR) < yfiInLp.mul(lpSlippage)
+        ) {
             //if the pool is still imbalanced after the arb dont do anything
             return;
         }
@@ -419,10 +445,10 @@ contract Strategy is BaseStrategy {
         //need equal yfi and woofy
         if (yfiBalance > woofyBalance) {
             uint256 desiredWoofy = (yfiBalance - woofyBalance) / 2;
-            GetFromOTC(woofy, desiredWoofy);
+            _getFromOTC(woofy, desiredWoofy);
         } else {
             uint256 desiredYfi = (woofyBalance - yfiBalance) / 2;
-            GetFromOTC(yfi, desiredYfi);
+            _getFromOTC(yfi, desiredYfi);
         }
 
         yfiBalance = balanceOfWant();
@@ -448,6 +474,19 @@ contract Strategy is BaseStrategy {
         lpDepositer.deposit(lpToken, IERC20(lpToken).balanceOf(address(this)));
     }
 
+    function _setUpTradeFactory() internal {
+        //approve and set up trade factory
+        address _tradeFactory = tradeFactory;
+
+        ITradeFactory tf = ITradeFactory(_tradeFactory);
+        sex.safeApprove(_tradeFactory, type(uint256).max);
+        tf.enable(address(sex), address(want));
+
+        solid.safeApprove(_tradeFactory, type(uint256).max);
+        tf.enable(address(solid), address(want));
+        tradesEnabled = true;
+    }
+
     //returns lp tokens needed to get that amount of yfi
     function yfiToLpTokens(uint256 amountOfYfiWeWant) public returns (uint256) {
         //amount of yfi and woofy for 1 lp token
@@ -470,7 +509,6 @@ contract Strategy is BaseStrategy {
         override
         returns (uint256 _liquidatedAmount, uint256 _loss)
     {
-
         uint256 balanceOfYfi = want.balanceOf(address(this));
 
         // if we need more yfi than is already loose in the contract
@@ -499,37 +537,32 @@ contract Strategy is BaseStrategy {
                 balanceOfLpTokens = IERC20(lpToken).balanceOf(address(this));
             }
 
-           ISolidlyRouter(
-                solidlyRouter
-            ).removeLiquidity(
-                    address(yfi),
-                    address(woofy),
-                    false,
-                    Math.min(lpTokensNeeded, balanceOfLpTokens),
-                    0,
-                    0,
-                    address(this),
-                    type(uint256).max
-                );
+            ISolidlyRouter(solidlyRouter).removeLiquidity(
+                address(yfi),
+                address(woofy),
+                false,
+                Math.min(lpTokensNeeded, balanceOfLpTokens),
+                0,
+                0,
+                address(this),
+                type(uint256).max
+            );
             //now we have a bunch of yfi and woofy
 
             //now we swap if we can at a profit
             uint256 yfiInLp = yfi.balanceOf(lpToken);
             uint256 woofyInLp = woofy.balanceOf(lpToken);
-            if(yfiInLp>woofyInLp.add(dustThreshold)){
+            if (yfiInLp > woofyInLp.add(dustThreshold)) {
                 //we can arb
                 _arbThePeg();
             }
 
             balanceOfYfi = want.balanceOf(address(this));
-            if(balanceOfYfi < _amountNeeded){
-                balanceOfYfi = GetFromOTC(yfi,_amountNeeded - balanceOfYfi );
+            if (balanceOfYfi < _amountNeeded) {
+                balanceOfYfi = _getFromOTC(yfi, _amountNeeded - balanceOfYfi);
             }
 
-            _liquidatedAmount = Math.min(
-               balanceOfYfi,
-                _amountNeeded
-            );
+            _liquidatedAmount = Math.min(balanceOfYfi, _amountNeeded);
 
             if (_liquidatedAmount < _amountNeeded) {
                 _loss = _amountNeeded.sub(_liquidatedAmount);
@@ -551,10 +584,10 @@ contract Strategy is BaseStrategy {
             address(this),
             type(uint256).max
         );
-        GetFromOTC(yfi, type(uint256).max); //swap all we can
+        _getFromOTC(yfi, type(uint256).max); //swap all we can
 
         //if we have woofy left revert
-        if(!takeLosses){
+        if (!takeLosses) {
             require(balanceOfWoofy() == 0);
         }
 
@@ -563,7 +596,10 @@ contract Strategy is BaseStrategy {
 
     function prepareMigration(address _newStrategy) internal override {
         if (!depositerAvoid) {
-            lpDepositer.withdraw(lpToken, balanceOfLPStaked());
+            uint256 balanceOfStaked = balanceOfLPStaked();
+            if (balanceOfStaked > 0) {
+                lpDepositer.withdraw(lpToken, balanceOfLPStaked());
+            }
         }
 
         uint256 lpBalance = IERC20(lpToken).balanceOf(address(this));
@@ -594,61 +630,6 @@ contract Strategy is BaseStrategy {
         returns (address[] memory)
     {}
 
-    // NOT TRUE ANYMORE... our main trigger is regarding our DCA since there is low liquidity for our emissionToken
-    function harvestTrigger(uint256 callCostinEth)
-        public
-        view
-        override
-        returns (bool)
-    {
-        StrategyParams memory params = vault.strategies(address(this));
-
-        // harvest no matter what once we reach our maxDelay
-        if (block.timestamp.sub(params.lastReport) > maxReportDelay) {
-            return true;
-        }
-
-        // trigger if we want to manually harvest
-        if (forceHarvestTriggerOnce) {
-            return true;
-        }
-
-        // trigger if we have enough credit
-        if (vault.creditAvailable() >= minHarvestCredit) {
-            return true;
-        }
-
-        // otherwise, we don't harvest
-        return false;
-    }
-
-    function ethToWant(uint256 _amtInWei)
-        public
-        view
-        override
-        returns (uint256)
-    {}
-
-    function updateTradeFactory(address _newTradeFactory)
-        external
-        onlyGovernance
-    {
-        if (tradeFactory != address(0)) {
-            _removeTradeFactoryPermissions();
-        }
-
-        tradeFactory = _newTradeFactory;
-        _setUpTradeFactory();
-    }
-
-    function updateOTCTrader(address _trader) external onlyVaultManagers {
-        _setupOTCTrader(_trader);
-    }
-
-    function setTakeLosses(bool _takeLosses) external onlyVaultManagers {
-        takeLosses = _takeLosses;
-    }
-
     function _setupOTCTrader(address _trader) internal {
         if (address(otcSwapper) != address(0)) {
             woofy.approve(address(otcSwapper), 0);
@@ -677,6 +658,26 @@ contract Strategy is BaseStrategy {
 
     /* ========== SETTERS ========== */
 
+    function updateOTCTrader(address _trader) external onlyGovernance {
+        _setupOTCTrader(_trader);
+    }
+
+    function setTakeLosses(bool _takeLosses) external onlyVaultManagers {
+        takeLosses = _takeLosses;
+    }
+
+    function updateTradeFactory(address _newTradeFactory)
+        external
+        onlyGovernance
+    {
+        if (tradeFactory != address(0)) {
+            _removeTradeFactoryPermissions();
+        }
+
+        tradeFactory = _newTradeFactory;
+        _setUpTradeFactory();
+    }
+
     ///@notice This allows us to manually harvest with our keeper as needed
     function setForceHarvestTriggerOnce(bool _forceHarvestTriggerOnce)
         external
@@ -701,8 +702,23 @@ contract Strategy is BaseStrategy {
         realiseLosses = _realiseLoosses;
     }
 
-    ///@notice When our strategy has this much credit, harvestTrigger will be true.
     function setLpSlippage(uint256 _slippage) external onlyEmergencyAuthorized {
+        _setLpSlippage(_slippage, false);
+    }
+
+    //only vault managers can set high slippage
+    function setLpSlippage(uint256 _slippage, bool _force)
+        external
+        onlyVaultManagers
+    {
+        _setLpSlippage(_slippage, _force);
+    }
+
+    function _setLpSlippage(uint256 _slippage, bool _force) internal {
+        require(_slippage <= DENOMINATOR, "higher than max");
+        if (!_force) {
+            require(_slippage >= 9900, "higher than 1pc slippage set");
+        }
         lpSlippage = _slippage;
     }
 

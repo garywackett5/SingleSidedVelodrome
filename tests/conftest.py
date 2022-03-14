@@ -1,5 +1,5 @@
 import pytest
-from brownie import config, Wei, Contract
+from brownie import config, Wei, Contract, network
 
 # Snapshots the chain before each test and reverts after test completion.
 
@@ -40,9 +40,11 @@ def solid():
 def wbtc():
     yield Contract("0x321162Cd933E2Be498Cd2267a90534A804051b11")
 
+
 @pytest.fixture(scope="module")
 def dai():
     yield Contract("0x8D11eC38a3EB5E956B052f67Da8Bdc9bef8Abf3E")
+
 
 @pytest.fixture(scope="module")
 def usdc():
@@ -53,13 +55,16 @@ def usdc():
 def yfi():
     yield Contract("0x29b0Da86e484E1C0029B56e817912d778aC0EC69")
 
+
 @pytest.fixture(scope="module")
 def woofy():
     yield Contract("0xD0660cD418a64a1d44E9214ad8e459324D8157f1")
 
+
 @pytest.fixture(scope="module")
 def yfi_woofy_lp():
     yield Contract("0x4b3a172283ecB7d07AB881a9443d38cB1c98F4d0")
+
 
 @pytest.fixture(scope="module")
 def mim():
@@ -103,6 +108,8 @@ def woofy_whale(accounts):
     yield whale
 
 # this is the amount of funds we have our whale deposit. adjust this as needed based on their wallet balance
+
+
 @pytest.fixture(scope="module")
 def amount(token):  # use today's exchange rates to have similar $$ amounts
     amount = 10 * (10 ** token.decimals())
@@ -190,10 +197,9 @@ def trade_factory():
 
 @pytest.fixture
 def woofy_filled_swapper(swapper, woofy_whale, woofy, strategist):
-    swapper.setTradePermission(woofy_whale, True, {'from': strategist})
-    woofy.approve(swapper, 2**256-1, {'from': woofy_whale})
-    swapper.provideLiquidity(woofy, 50e18, {'from': woofy_whale})
+
     yield swapper
+
 
 @pytest.fixture(scope="module")
 def management(accounts):
@@ -219,9 +225,11 @@ def strategist(accounts):
 # use this if you need to deploy the vault
 @pytest.fixture(scope="function")
 def vault(pm, gov, rewards, guardian, management, token, chain):
+    # network.gas_price(0)
+
     Vault = pm(config["dependencies"][0]).Vault
     vault = guardian.deploy(Vault)
-    vault.initialize(token, gov, rewards, "", "", guardian)
+    vault.initialize(token, gov, rewards, "", "", guardian, {'from': guardian})
     vault.setDepositLimit(2 ** 256 - 1, {"from": gov})
     vault.setManagement(management, {"from": gov})
     chain.sleep(1)
@@ -235,9 +243,13 @@ def vault(pm, gov, rewards, guardian, management, token, chain):
 #     yield vault
 
 @pytest.fixture(scope="function")
-def swapper(OTCTrader, strategist):
-    yield strategist.deploy(OTCTrader)
+def swapper(OTCTrader, strategist, woofy, woofy_whale):
+    swapper = strategist.deploy(OTCTrader)
 
+    swapper.setTradePermission(woofy_whale, True, {'from': strategist})
+    woofy.approve(swapper, 2**256-1, {'from': woofy_whale})
+    swapper.provideLiquidity(woofy, 50e18, {'from': woofy_whale})
+    yield swapper
 
 
 # replace the first value with the name of your strategy

@@ -15,10 +15,10 @@ contract OTCTrader is Ownable {
     using SafeMath for uint256;
 
     address internal constant yfi = 0x29b0Da86e484E1C0029B56e817912d778aC0EC69;
-    address internal constant woofy = 0xD0660cD418a64a1d44E9214ad8e459324D8157f1;
+    address internal constant woofy =
+        0xD0660cD418a64a1d44E9214ad8e459324D8157f1;
     mapping(address => uint256) public deposits; // amount of liquidity user has provided
     mapping(address => bool) public traders; // allow us to limit traders
-
 
     constructor() public {
         traders[msg.sender] = true;
@@ -52,7 +52,10 @@ contract OTCTrader is Ownable {
     }
 
     //provide liquidity with yfi or woofy. treated as the same
-    function provideLiquidity(address _token, uint256 _amount) public tradersonly {
+    function provideLiquidity(address _token, uint256 _amount)
+        public
+        tradersonly
+    {
         require(_token == yfi || _token == woofy, "token not allowed");
         deposits[msg.sender] = deposits[msg.sender].add(_amount);
         IERC20 token = IERC20(_token);
@@ -63,10 +66,12 @@ contract OTCTrader is Ownable {
         uint256 diff = token.balanceOf(address(this)).sub(balanceBefore);
 
         require(diff >= _amount);
-        
     }
 
-    function withdrawLiquidity(address _token, uint256 _amount) public tradersonly {
+    function withdrawLiquidity(address _token, uint256 _amount)
+        public
+        tradersonly
+    {
         require(_token == yfi || _token == woofy, "token not allowed");
         uint256 deposited = deposits[msg.sender];
         deposits[msg.sender] = deposited.sub(_amount);
@@ -76,18 +81,19 @@ contract OTCTrader is Ownable {
         uint256 balanceBefore = token.balanceOf(address(this));
 
         require(balanceBefore >= _amount, "not enough liquidity");
-        
+
         require(deposited >= _amount, "not enough deposits");
 
         token.safeTransfer(msg.sender, _amount);
+    }
 
-        
+    function sweep(address _token, uint256 _amount) public onlyOwner {
+        IERC20 token = IERC20(_token);
+        token.safeTransfer(msg.sender, _amount);
     }
 
     modifier tradersonly() {
-
         require(traders[msg.sender], "traders only");
-   
 
         _;
     }

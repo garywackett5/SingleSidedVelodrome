@@ -1,5 +1,5 @@
 import brownie
-from brownie import Contract
+from brownie import Contract, network
 import time
 import web3
 from eth_abi import encode_single, encode_abi
@@ -10,25 +10,36 @@ import eth_utils
 
 def test_yswap(
     gov,
-    liveBooStrat,
+    strategy,
     wftm,
     amount,
     Contract,
     ymechs_safe,
     chain,
+    weth,
+    vault,
     accounts,
+    token,
     solidex_router,
+    yfi,
     interface,
     spooky_router,
     trade_factory,
+    whale,
     sex,
     solid,
     multicall_swapper,
     strategist_ms
 ):
-    strategy = liveBooStrat
-    vault = Contract(strategy.vault())
-    token = Contract(vault.token())
+
+    # vault = Contract(strategy.vault())
+    # token = Contract(vault.token())
+    network.gas_price(0)
+    print(network.gas_price())
+    print(chain.height)
+
+    token.approve(vault, 2 ** 256 - 1, {"from": whale, "gas_price": 0})
+    vault.deposit(amount, {"from": whale, "gas_price": 0})
 
     print(token)
     print("CallOnlyOptimizationRequired(): ", eth_utils.to_hex(
@@ -66,6 +77,16 @@ def test_yswap(
 
     strategy.harvest({"from": strategist})
 
+    chain.sleep(60*60*6)
+    chain.mine(1)
+    strategy.harvest({"from": strategist})
+    pair = Contract('0x0845c0bfe75691b1e21b24351aac581a7fb6b7df')
+
+    print(pair.getReserves())
+    pair.sync({"from": strategist})
+    print(weth.balanceOf(pair))
+    print(yfi.balanceOf(pair))
+
     token_out = token
 
     id = solid
@@ -93,7 +114,8 @@ def test_yswap(
     a = a + t[0]
     b = b + t[1]
 
-    path = [token_in.address, wftm, token_out.address]
+    path = [token_in.address, wftm, weth, token_out.address]
+    print(path)
     calldata = spooky_router.swapExactTokensForTokens.encode_input(
         amount_in, 0, path, receiver, 2 ** 256 - 1
     )
@@ -108,83 +130,83 @@ def test_yswap(
     # )
     trade_factory.execute['tuple,address,bytes'](asyncTradeExecutionDetails,
                                                  multicall_swapper.address, transaction, {
-                                                     "from": ymechs_safe}
+                                                     "from": ymechs_safe, "gas_price": 0, 'gas': 5000000}
                                                  )
 
     afterone = token_out.balanceOf(strategy)
     print(afterone/1e18)
     # now do sex
 
-    id = sex
+    # id = sex
 
-    # wftmboopair = Contract(
-    #     '0xEc7178F4C41f346b2721907F5cF7628E388A7a58')  # spookylp
-    # sexwftmpair = Contract(
-    #     '0xFCEC86aF8774d69e2e4412B8De3f4aBf1f671ecC')  # volatile amm pair
+    # # wftmboopair = Contract(
+    # #     '0xEc7178F4C41f346b2721907F5cF7628E388A7a58')  # spookylp
+    # # sexwftmpair = Contract(
+    # #     '0xFCEC86aF8774d69e2e4412B8De3f4aBf1f671ecC')  # volatile amm pair
 
-    print(f"Executing trades...")
+    # print(f"Executing trades...")
 
-    print(id.address)
-    receiver = strategy.address
-    token_in = id
+    # print(id.address)
+    # receiver = strategy.address
+    # token_in = id
 
-    amount_in = id.balanceOf(strategy)
-    print(
-        f"Executing trade {id}, tokenIn: {token_in} -> tokenOut {token_out} amount {amount_in/1e18}")
+    # amount_in = id.balanceOf(strategy)
+    # print(
+    #     f"Executing trade {id}, tokenIn: {token_in} -> tokenOut {token_out} amount {amount_in/1e18}")
 
-    asyncTradeExecutionDetails = [
-        strategy, token_in, token_out, amount_in, 1]
+    # asyncTradeExecutionDetails = [
+    #     strategy, token_in, token_out, amount_in, 1]
 
-    optimsations = [["uint8"], [5]]
-    a = optimsations[0]
-    b = optimsations[1]
+    # optimsations = [["uint8"], [5]]
+    # a = optimsations[0]
+    # b = optimsations[1]
 
-    # send all our tokens
-    calldata = token_in.approve.encode_input(solidex_router, amount_in)
-    t = createTx(token_in, calldata)
-    a = a + t[0]
-    b = b + t[1]
+    # # send all our tokens
+    # calldata = token_in.approve.encode_input(solidex_router, amount_in)
+    # t = createTx(token_in, calldata)
+    # a = a + t[0]
+    # b = b + t[1]
 
-    step = [token_in.address, wftm, False]
-    path = [step]
+    # step = [token_in.address, wftm, False]
+    # path = [step]
 
-    expectedOut = solidex_router.getAmountsOut(amount_in, path)[1]
+    # expectedOut = solidex_router.getAmountsOut(amount_in, path)[1]
 
-    calldata = solidex_router.swapExactTokensForTokens.encode_input(
-        amount_in, 0, path, multicall_swapper, 2 ** 256 - 1
-    )
-    t = createTx(solidex_router, calldata)
-    a = a + t[0]
-    b = b + t[1]
+    # calldata = solidex_router.swapExactTokensForTokens.encode_input(
+    #     amount_in, 0, path, multicall_swapper, 2 ** 256 - 1
+    # )
+    # t = createTx(solidex_router, calldata)
+    # a = a + t[0]
+    # b = b + t[1]
 
-    calldata = wftm.approve.encode_input(spooky_router, expectedOut)
-    t = createTx(wftm, calldata)
-    a = a + t[0]
-    b = b + t[1]
+    # calldata = wftm.approve.encode_input(spooky_router, expectedOut)
+    # t = createTx(wftm, calldata)
+    # a = a + t[0]
+    # b = b + t[1]
 
-    path = [wftm, token_out.address]
-    calldata = spooky_router.swapExactTokensForTokens.encode_input(
-        expectedOut, 0, path, receiver, 2 ** 256 - 1
-    )
-    t = createTx(spooky_router, calldata)
-    a = a + t[0]
-    b = b + t[1]
-    transaction = encode_abi_packed(a, b)
+    # path = [wftm, token_out.address]
+    # calldata = spooky_router.swapExactTokensForTokens.encode_input(
+    #     expectedOut, 0, path, receiver, 2 ** 256 - 1
+    # )
+    # t = createTx(spooky_router, calldata)
+    # a = a + t[0]
+    # b = b + t[1]
+    # transaction = encode_abi_packed(a, b)
 
-    trade_factory.execute['tuple,address,bytes'](asyncTradeExecutionDetails,
-                                                 multicall_swapper.address, transaction, {
-                                                     "from": ymechs_safe}
-                                                 )
+    # trade_factory.execute['tuple,address,bytes'](asyncTradeExecutionDetails,
+    #                                              multicall_swapper.address, transaction, {
+    #                                                  "from": ymechs_safe}
+    #                                              )
 
-    aftertwo = token_out.balanceOf(strategy)
-    print(aftertwo/1e18)
-    assert aftertwo > afterone
+    # aftertwo = token_out.balanceOf(strategy)
+    # print(aftertwo/1e18)
+    # assert aftertwo > afterone
     strategy.setDoHealthCheck(False, {"from": gov})
     tx = strategy.harvest({"from": strategist})
     print('profit: ', tx.events["Harvested"]["profit"]/1e18)
     assert tx.events["Harvested"]["profit"] > 0
 
-    #print("apr = ", (365*2*tx.events["Harvested"]["profit"]) / vault_after)
+    # print("apr = ", (365*2*tx.events["Harvested"]["profit"]) / vault_after)
 
 
 def createTx(to, data):
