@@ -147,6 +147,11 @@ def healthCheck():
 
 
 @pytest.fixture(scope="module")
+def solidly_router():
+    yield Contract("0xa38cd27185a464914D3046f0AB9d43356B34829D")
+
+
+@pytest.fixture(scope="module")
 def liveBooStrat():
     yield Contract("0xADE3BaC94177295329474aAd6A253Bae979BFA68")
 
