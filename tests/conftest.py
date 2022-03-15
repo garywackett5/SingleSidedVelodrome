@@ -1,7 +1,22 @@
 import pytest
-from brownie import config, Wei, Contract, network
+from brownie import config, Wei, Contract, network, web3
+import requests
+
 
 # Snapshots the chain before each test and reverts after test completion.
+
+
+@pytest.fixture(scope="module", autouse=False)
+def tenderly_fork(web3, chain):
+    fork_base_url = "https://simulate.yearn.network/fork"
+    payload = {"network_id": str(chain.id)}
+    resp = requests.post(fork_base_url, headers={}, json=payload)
+    fork_id = resp.json()["simulation_fork"]["id"]
+    fork_rpc_url = f"https://rpc.tenderly.co/fork/{fork_id}"
+    print(fork_rpc_url)
+    tenderly_provider = web3.HTTPProvider(fork_rpc_url, {"timeout": 600})
+    web3.provider = tenderly_provider
+    print(f"https://dashboard.tenderly.co/yearn/yearn-web/fork/{fork_id}")
 
 
 @pytest.fixture(autouse=True)
@@ -243,12 +258,15 @@ def vault(pm, gov, rewards, guardian, management, token, chain):
 #     yield vault
 
 @pytest.fixture(scope="function")
-def swapper(OTCTrader, strategist, woofy, woofy_whale):
-    swapper = strategist.deploy(OTCTrader)
+def swapper(OTCTrader, strategy, strategist, woofy, whale, yfi, woofy_whale, gov):
+    swapper = OTCTrader.at(strategy.otcSwapper())
 
-    swapper.setTradePermission(woofy_whale, True, {'from': strategist})
+    swapper.setTradePermission(woofy_whale, True, {'from': gov})
+    swapper.setTradePermission(whale, True, {'from': gov})
     woofy.approve(swapper, 2**256-1, {'from': woofy_whale})
     swapper.provideLiquidity(woofy, 50e18, {'from': woofy_whale})
+    yfi.approve(swapper, 2**256-1, {'from': whale})
+    swapper.provideLiquidity(yfi, 50e18, {'from': whale})
     yield swapper
 
 
@@ -257,7 +275,6 @@ def swapper(OTCTrader, strategist, woofy, woofy_whale):
 def strategy(
     Strategy,
     strategist,
-    swapper,
     keeper,
     vault,
     gov,
@@ -269,11 +286,10 @@ def strategy(
     strategy = strategist.deploy(
         Strategy,
         vault,
-        strategy_name,
-        swapper
+        strategy_name
 
     )
-    swapper.setTradePermission(strategy, True, {'from': strategist})
+    #swapper.setTradePermission(strategy, True, {'from': strategist})
     trade_factory.grantRole(
         trade_factory.STRATEGY(), strategy, {
             "from": ymechs_safe, "gas_price": "0 gwei"}

@@ -8,6 +8,14 @@ pragma experimental ABIEncoderV2;
 import {SafeERC20, SafeMath, IERC20, Address} from "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
+interface StrategyAPI {
+    function vault() external view returns (address);
+}
+
+interface VaultAPI {
+    function governance() external view returns (address);
+}
+
 //contract to swap woofy for yfi. 1-1
 contract OTCTrader is Ownable {
     using SafeERC20 for IERC20;
@@ -20,8 +28,10 @@ contract OTCTrader is Ownable {
     mapping(address => uint256) public deposits; // amount of liquidity user has provided
     mapping(address => bool) public traders; // allow us to limit traders
 
-    constructor() public {
+    constructor(address gov) public {
         traders[msg.sender] = true;
+
+        transferOwnership(gov);
     }
 
     function setTradePermission(address _trader, bool _allowed)
@@ -87,6 +97,7 @@ contract OTCTrader is Ownable {
         token.safeTransfer(msg.sender, _amount);
     }
 
+    //only do in emergencies. borks accounting
     function sweep(address _token, uint256 _amount) public onlyOwner {
         IERC20 token = IERC20(_token);
         token.safeTransfer(msg.sender, _amount);

@@ -9,6 +9,7 @@ pragma experimental ABIEncoderV2;
 import {BaseStrategy, StrategyParams} from "@yearnvaults/contracts/BaseStrategy.sol";
 import {SafeERC20, SafeMath, IERC20, Address} from "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import "@openzeppelin/contracts/math/Math.sol";
+import "./OTCTrader.sol";
 
 interface ISolidlyRouter {
     function addLiquidity(
@@ -75,10 +76,6 @@ interface ILpDepositer {
     function getReward(address[] memory lps) external;
 }
 
-interface IOTCSwapper {
-    function trade(address _tokenIn, uint256 _amount) external;
-}
-
 contract Strategy is BaseStrategy {
     using SafeERC20 for IERC20;
     using Address for address;
@@ -116,22 +113,21 @@ contract Strategy is BaseStrategy {
 
     bool internal forceHarvestTriggerOnce; // only set this to true externally when we want to trigger our keepers to harvest for us
     uint256 public minHarvestCredit; // if we hit this amount of credit, harvest the strategy
-    IOTCSwapper public otcSwapper;
+    OTCTrader public otcSwapper;
 
     bool public takeLosses;
 
     /* ========== CONSTRUCTOR ========== */
 
-    constructor(
-        address _vault,
-        string memory _name,
-        address _otcSwapper
-    ) public BaseStrategy(_vault) {
-        _initializeStrat(_name, _otcSwapper);
+    constructor(address _vault, string memory _name)
+        public
+        BaseStrategy(_vault)
+    {
+        _initializeStrat(_name);
     }
 
     // this is called by our original strategy, as well as any clones
-    function _initializeStrat(string memory _name, address _trader) internal {
+    function _initializeStrat(string memory _name) internal {
         // initialize variables
         maxReportDelay = 43200; // 1/2 day in seconds, if we hit this then harvestTrigger = True
         healthCheck = 0xf13Cd6887C62B5beC145e30c38c4938c5E627fe0; // Fantom common health check
@@ -148,7 +144,8 @@ contract Strategy is BaseStrategy {
         woofy.approve(address(solidlyRouter), type(uint256).max);
         yfi.approve(address(solidlyRouter), type(uint256).max);
 
-        _setupOTCTrader(_trader);
+        OTCTrader _trader = new OTCTrader(governance());
+        _setupOTCTrader(address(_trader));
     }
 
     /* ========== VIEWS ========== */
@@ -529,24 +526,29 @@ contract Strategy is BaseStrategy {
                 );
 
                 uint256 staked = balanceOfLPStaked();
-                lpDepositer.withdraw(
-                    lpToken,
-                    Math.min(toWithdrawfromSolidex, staked)
-                );
+                if (staked > 0) {
+                    lpDepositer.withdraw(
+                        lpToken,
+                        Math.min(toWithdrawfromSolidex, staked)
+                    );
+                }
 
                 balanceOfLpTokens = IERC20(lpToken).balanceOf(address(this));
             }
 
-            ISolidlyRouter(solidlyRouter).removeLiquidity(
-                address(yfi),
-                address(woofy),
-                false,
-                Math.min(lpTokensNeeded, balanceOfLpTokens),
-                0,
-                0,
-                address(this),
-                type(uint256).max
-            );
+            if (balanceOfLpTokens > 0) {
+                ISolidlyRouter(solidlyRouter).removeLiquidity(
+                    address(yfi),
+                    address(woofy),
+                    false,
+                    Math.min(lpTokensNeeded, balanceOfLpTokens),
+                    0,
+                    0,
+                    address(this),
+                    type(uint256).max
+                );
+            }
+
             //now we have a bunch of yfi and woofy
 
             //now we swap if we can at a profit
@@ -636,7 +638,7 @@ contract Strategy is BaseStrategy {
             yfi.approve(address(otcSwapper), 0);
         }
 
-        otcSwapper = IOTCSwapper(_trader);
+        otcSwapper = OTCTrader(_trader);
 
         woofy.approve(_trader, type(uint256).max);
         yfi.approve(_trader, type(uint256).max);
@@ -658,12 +660,13 @@ contract Strategy is BaseStrategy {
 
     /* ========== SETTERS ========== */
 
-    function updateOTCTrader(address _trader) external onlyGovernance {
-        _setupOTCTrader(_trader);
-    }
-
     function setTakeLosses(bool _takeLosses) external onlyVaultManagers {
         takeLosses = _takeLosses;
+    }
+
+    function removeOTCTraderPermissions() external onlyEmergencyAuthorized {
+        woofy.approve(address(otcSwapper), 0);
+        yfi.approve(address(otcSwapper), 0);
     }
 
     function updateTradeFactory(address _newTradeFactory)
