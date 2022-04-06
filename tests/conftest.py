@@ -27,7 +27,7 @@ def isolation(fn_isolation):
 # this is the name we want to give our strategy
 @pytest.fixture(scope="module")
 def strategy_name():
-    strategy_name = "yfi_woofy_ve_solidex"
+    strategy_name = "yfi_woofy_veLp_Oxdao"
     yield strategy_name
 
 
@@ -42,8 +42,8 @@ def weth():
 
 
 @pytest.fixture(scope="module")
-def sex():
-    yield Contract("0xD31Fcd1f7Ba190dBc75354046F6024A9b86014d7")
+def oxd():
+    yield Contract("0xc5A9848b9d145965d821AaeC8fA32aaEE026492d")
 
 
 @pytest.fixture(scope="module")
@@ -96,9 +96,14 @@ def xboo():
     yield Contract("0xa48d959AE2E88f1dAA7D5F611E01908106dE7598")
 
 
+@pytest.fixture(scope="module")	
+def ox_pool():	
+    yield Contract("0x6B64Ad957b352B3740DC6Ee48bfC3e02908b2b22")
+
+
 @pytest.fixture(scope="module")
-def lpdepositer():
-    yield Contract("0x26E1A0d851CF28E697870e1b7F053B605C8b060F")
+def multi_rewards():	
+    yield Contract("0x2e21D83FF3e59468c5FED4d90cD4a03Eca07Ba1D")
 
 
 # Define relevant tokens and contracts in this section
@@ -263,8 +268,12 @@ def vault(pm, gov, rewards, guardian, management, token, chain):
 #     yield vault
 
 @pytest.fixture(scope="function")
-def swapper(OTCTrader, strategy, strategist, woofy, whale, yfi, woofy_whale, gov):
-    swapper = OTCTrader.at(strategy.otcSwapper())
+def swapper(OTCTrader, strategist, woofy, whale, yfi, woofy_whale, gov):
+    swapper = gov.deploy(
+        OTCTrader,
+        gov
+
+    )
 
     swapper.setTradePermission(woofy_whale, True, {'from': gov})
     swapper.setTradePermission(whale, True, {'from': gov})
@@ -285,16 +294,18 @@ def strategy(
     gov,
     strategy_name,
     trade_factory,
-    ymechs_safe
+    ymechs_safe,
+    swapper
 ):
     # make sure to include all constructor parameters needed here
     strategy = strategist.deploy(
         Strategy,
         vault,
-        strategy_name
+        strategy_name,
+        swapper
 
     )
-    #swapper.setTradePermission(strategy, True, {'from': strategist})
+    swapper.setTradePermission(strategy, True, {'from': strategist})
     trade_factory.grantRole(
         trade_factory.STRATEGY(), strategy, {
             "from": ymechs_safe, "gas_price": "0 gwei"}

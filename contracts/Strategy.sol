@@ -9,12 +9,15 @@ pragma experimental ABIEncoderV2;
 import {BaseStrategy, StrategyParams} from "@yearnvaults/contracts/BaseStrategy.sol";
 import {SafeERC20, SafeMath, IERC20, Address} from "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import "@openzeppelin/contracts/math/Math.sol";
-import "./OTCTrader.sol";
 
 struct route {
     address from;
     address to;
     bool stable;
+}
+
+interface IOTCTrader {
+    function trade(address _tokenIn, uint256 _amount) external;
 }
 
 interface IOxPool {
@@ -211,21 +214,21 @@ contract Strategy is BaseStrategy {
 
     bool internal forceHarvestTriggerOnce; // only set this to true externally when we want to trigger our keepers to harvest for us
     uint256 public minHarvestCredit; // if we hit this amount of credit, harvest the strategy
-    OTCTrader public otcSwapper;
+    IOTCTrader public otcSwapper;
 
     bool public takeLosses;
 
     /* ========== CONSTRUCTOR ========== */
 
-    constructor(address _vault, string memory _name)
+    constructor(address _vault, string memory _name, address _otctrader)
         public
         BaseStrategy(_vault)
     {
-        _initializeStrat(_name);
+        _initializeStrat(_name, _otctrader);
     }
 
     // this is called by our original strategy, as well as any clones
-    function _initializeStrat(string memory _name) internal {
+    function _initializeStrat(string memory _name, address _otctrader) internal {
         // initialize variables
         maxReportDelay = 43200; // 1/2 day in seconds, if we hit this then harvestTrigger = True
         healthCheck = 0xf13Cd6887C62B5beC145e30c38c4938c5E627fe0; // Fantom common health check
@@ -244,7 +247,7 @@ contract Strategy is BaseStrategy {
         IERC20(solidPoolAddress).approve(oxPoolAddress, type(uint256).max);
         IERC20(oxPoolAddress).approve(stakingAddress, type(uint256).max);
 
-        OTCTrader _trader = new OTCTrader(governance());
+        IOTCTrader _trader = IOTCTrader(_otctrader);
         _setupOTCTrader(address(_trader));
     }
 
@@ -309,8 +312,6 @@ contract Strategy is BaseStrategy {
             );	
     }
 
-    
-
     // NOT TRUE ANYMORE... our main trigger is regarding our DCA since there is low liquidity for our emissionToken
     function harvestTrigger(uint256 callCostinEth)
         public
@@ -361,9 +362,7 @@ contract Strategy is BaseStrategy {
             _setUpTradeFactory();
         }
         // claim our rewards
-        address[] memory pairs = new address[](1);
-        pairs[0] = address(lpToken);
-        lpDepositer.getReward(pairs);
+        multiRewards.getReward();
 
         uint256 assets = estimatedTotalAssets();
         uint256 wantBal = balanceOfWant();
@@ -382,7 +381,11 @@ contract Strategy is BaseStrategy {
             //withdraw with loss
             if (realiseLosses) {
                 _loss = debt.sub(assets);
-                _debtPayment = _debtOutstanding.sub(_loss);
+                if (_debtOutstanding > _loss) {	
+                    _debtPayment = _debtOutstanding.sub(_loss);	
+                } else {	
+                    _debtPayment = 0;	
+                }
 
                 amountToFree = _debtPayment;
             }
@@ -581,8 +584,27 @@ contract Strategy is BaseStrategy {
             2**256 - 1
         );
 
-        //deposit to lp depositer
-        lpDepositer.deposit(lpToken, IERC20(lpToken).balanceOf(address(this)));
+        uint256 lpBalance = IERC20(lpToken).balanceOf(address(this));
+
+        if (lpBalance > 0) {	
+            // Transfer Solidly LP to ox pool to receive Ox pool LP receipt token	
+            oxPool.depositLp(lpBalance);	
+            // Stake oxLP in multirewards	
+            multiRewards.stake(oxLp.balanceOf(address(this)));	
+        }
+    }
+
+    function _setUpTradeFactory() internal {
+        //approve and set up trade factory
+        address _tradeFactory = tradeFactory;
+
+        ITradeFactory tf = ITradeFactory(_tradeFactory);
+        oxd.safeApprove(_tradeFactory, type(uint256).max);
+        tf.enable(address(oxd), address(want));
+
+        solid.safeApprove(_tradeFactory, type(uint256).max);
+        tf.enable(address(solid), address(want));
+        tradesEnabled = true;
     }
 
     //returns lp tokens needed to get that amount of yfi
@@ -622,16 +644,19 @@ contract Strategy is BaseStrategy {
             );
 
             if (balanceOfLpTokens < lpTokensNeeded) {
-                uint256 toWithdrawfromSolidex = lpTokensNeeded.sub(
+                uint256 toWithdrawfromOxdao = lpTokensNeeded.sub(
                     balanceOfLpTokens
                 );
 
+                 // balance of oxlp staked in multiRewards
                 uint256 staked = balanceOfLPStaked();
                 if (staked > 0) {
-                    lpDepositer.withdraw(
-                        lpToken,
-                        Math.min(toWithdrawfromSolidex, staked)
-                    );
+                    // Withdraw oxLP from multiRewards	
+                    multiRewards.withdraw(Math.min(toWithdrawfromOxdao, staked));	
+                    // our balance of oxlp in oxPool	
+                    uint256 oxLpBalance = oxPool.balanceOf(address(this));	
+                    // Redeem/burn oxPool LP for Solidly LP	
+                    oxPool.withdrawLp(Math.min(toWithdrawfromOxdao, oxLpBalance));
                 }
 
                 balanceOfLpTokens = IERC20(lpToken).balanceOf(address(this));
@@ -676,7 +701,16 @@ contract Strategy is BaseStrategy {
     }
 
     function liquidateAllPositions() internal override returns (uint256) {
-        lpDepositer.withdraw(lpToken, balanceOfLPStaked());
+        // our balance of oxlp staked in multiRewards	
+        uint256 staked = balanceOfLPStaked();	
+        if (staked > 0) {	
+            // Withdraw oxLP from multiRewards	
+            multiRewards.withdraw(staked);	
+            // our balance of oxlp in oxPool	
+            uint256 oxLpBalance = oxPool.balanceOf(address(this));	
+            // Redeem/burn oxPool LP for Solidly LP	
+            oxPool.withdrawLp(oxLpBalance);
+        }
         ISolidlyRouter(solidlyRouter).removeLiquidity(
             address(yfi),
             address(woofy),
@@ -699,9 +733,15 @@ contract Strategy is BaseStrategy {
 
     function prepareMigration(address _newStrategy) internal override {
         if (!depositerAvoid) {
-            uint256 balanceOfStaked = balanceOfLPStaked();
-            if (balanceOfStaked > 0) {
-                lpDepositer.withdraw(lpToken, balanceOfLPStaked());
+            // our balance of oxlp staked in multiRewards	
+            uint256 staked = balanceOfLPStaked();	
+            if (staked > 0) {	
+                // Withdraw oxLP from multiRewards	
+                multiRewards.withdraw(staked);	
+                // our balance of oxlp in oxPool	
+                uint256 oxLpBalance = oxPool.balanceOf(address(this));	
+                // Redeem/burn oxPool LP for Solidly LP	
+                oxPool.withdrawLp(oxLpBalance);
             }
         }
 
@@ -719,11 +759,58 @@ contract Strategy is BaseStrategy {
         }
     }
 
-    function manualWithdraw(address lp, uint256 amount)
-        external
-        onlyEmergencyAuthorized
-    {
-        lpDepositer.withdraw(lp, amount);
+    // Withdraw all oxLP (and rewards) from multiRewards and Redeem/burn oxPool LP for Solidly LP	
+    function manualCompleteExit()	
+        external	
+        onlyEmergencyAuthorized	
+    {	
+        // Withdraw all oxLP (and rewards) from multiRewards	
+        multiRewards.exit();	
+        // our balance of oxlp in oxPool	
+        uint256 oxLpBalance = oxPool.balanceOf(address(this));	
+        // Redeem/burn oxPool LP for Solidly LP	
+        oxPool.withdrawLp(oxLpBalance);	
+    }
+    	
+    // Withdraw oxLP from multiRewards and Redeem/burn oxPool LP for Solidly LP	
+    function manualCompleteExit(uint256 amount)	
+        external	
+        onlyEmergencyAuthorized	
+    {	
+        _manualUnstake(amount);
+        // our balance of oxlp in oxPool
+        uint256 oxLpBalance = oxPool.balanceOf(address(this));
+        _manualWithdrawLP(Math.min(amount, oxLpBalance));
+    }
+
+    // Withdraw oxLP from multiRewards	
+    function manualUnstake(uint256 amount)
+        external	
+        onlyEmergencyAuthorized	
+    {	
+        _manualUnstake(amount);
+    }
+
+    // Withdraw oxLP from multiRewards	
+    function _manualUnstake(uint256 amount)
+        internal	
+    {	
+        multiRewards.withdraw(amount);	
+    }
+
+    // Redeem/burn oxPool LP for Solidly LP	
+    function manualWithdrawLP(uint256 amount)	
+        external	
+        onlyEmergencyAuthorized	
+    {	
+        _manualWithdrawLP(amount);	
+    }
+
+    // Redeem/burn oxPool LP for Solidly LP	
+    function _manualWithdrawLP(uint256 amount)	
+        internal
+    {	
+        oxPool.withdrawLp(amount);	
     }
 
     function protectedTokens()
@@ -739,7 +826,7 @@ contract Strategy is BaseStrategy {
             yfi.approve(address(otcSwapper), 0);
         }
 
-        otcSwapper = OTCTrader(_trader);
+        otcSwapper = IOTCTrader(_trader);
 
         woofy.approve(_trader, type(uint256).max);
         yfi.approve(_trader, type(uint256).max);
@@ -751,7 +838,7 @@ contract Strategy is BaseStrategy {
 
     function _removeTradeFactoryPermissions() internal {
         address _tradeFactory = tradeFactory;
-        sex.safeApprove(_tradeFactory, 0);
+        oxd.safeApprove(_tradeFactory, 0);
 
         solid.safeApprove(_tradeFactory, 0);
 
@@ -801,7 +888,7 @@ contract Strategy is BaseStrategy {
     ///@notice When our strategy has this much credit, harvestTrigger will be true.
     function setRealiseLosses(bool _realiseLoosses)
         external
-        onlyEmergencyAuthorized
+        onlyVaultManagers
     {
         realiseLosses = _realiseLoosses;
     }
@@ -826,7 +913,7 @@ contract Strategy is BaseStrategy {
         lpSlippage = _slippage;
     }
 
-    function setDepositerAvoid(bool _avoid) external onlyEmergencyAuthorized {
+    function setDepositerAvoid(bool _avoid) external onlyGovernance {
         depositerAvoid = _avoid;
     }
 
