@@ -4,6 +4,8 @@ from brownie import config
 import math
 
 # test passes as of 21-06-26
+
+
 def test_change_debt(
     gov,
     token,
@@ -13,8 +15,11 @@ def test_change_debt(
     strategy,
     chain,
     amount,
+    yfi,
+    woofy,
+    swapper
 ):
-    ## deposit to the vault after approving
+    # deposit to the vault after approving
     aidrop = 10*1e18
     startingWhale = token.balanceOf(whale)-aidrop
     token.approve(vault, 2 ** 256 - 1, {"from": whale})
@@ -55,12 +60,19 @@ def test_change_debt(
     new_assets = vault.totalAssets()
 
     # confirm we made money, or at least that we have about the same
-    assert new_assets >= old_assets or math.isclose(new_assets, old_assets, abs_tol=5)
+    assert new_assets >= old_assets or math.isclose(
+        new_assets, old_assets, abs_tol=5)
 
     # simulate a day of waiting for share price to bump back up
     chain.sleep(86400)
     chain.mine(1)
 
     # withdraw and confirm our whale made money
+
+    print(yfi.balanceOf(swapper))
+    print(woofy.balanceOf(swapper))
+
+    print(strategy.estimatedTotalAssets())
+    print(vault.strategies(strategy).dict())
     vault.withdraw({"from": whale})
     assert token.balanceOf(whale) >= startingWhale

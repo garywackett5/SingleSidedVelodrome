@@ -1,7 +1,22 @@
 import pytest
-from brownie import config, Wei, Contract
+from brownie import config, Wei, Contract, network, web3
+import requests
+
 
 # Snapshots the chain before each test and reverts after test completion.
+
+
+@pytest.fixture(scope="module", autouse=False)
+def tenderly_fork(web3, chain):
+    fork_base_url = "https://simulate.yearn.network/fork"
+    payload = {"network_id": str(chain.id)}
+    resp = requests.post(fork_base_url, headers={}, json=payload)
+    fork_id = resp.json()["simulation_fork"]["id"]
+    fork_rpc_url = f"https://rpc.tenderly.co/fork/{fork_id}"
+    print(fork_rpc_url)
+    tenderly_provider = web3.HTTPProvider(fork_rpc_url, {"timeout": 600})
+    web3.provider = tenderly_provider
+    print(f"https://dashboard.tenderly.co/yearn/yearn-web/fork/{fork_id}")
 
 
 @pytest.fixture(autouse=True)
@@ -40,9 +55,11 @@ def solid():
 def wbtc():
     yield Contract("0x321162Cd933E2Be498Cd2267a90534A804051b11")
 
+
 @pytest.fixture(scope="module")
 def dai():
     yield Contract("0x8D11eC38a3EB5E956B052f67Da8Bdc9bef8Abf3E")
+
 
 @pytest.fixture(scope="module")
 def usdc():
@@ -53,13 +70,16 @@ def usdc():
 def yfi():
     yield Contract("0x29b0Da86e484E1C0029B56e817912d778aC0EC69")
 
+
 @pytest.fixture(scope="module")
 def woofy():
     yield Contract("0xD0660cD418a64a1d44E9214ad8e459324D8157f1")
 
+
 @pytest.fixture(scope="module")
 def yfi_woofy_lp():
     yield Contract("0x4b3a172283ecB7d07AB881a9443d38cB1c98F4d0")
+
 
 @pytest.fixture(scope="module")
 def mim():
@@ -103,6 +123,8 @@ def woofy_whale(accounts):
     yield whale
 
 # this is the amount of funds we have our whale deposit. adjust this as needed based on their wallet balance
+
+
 @pytest.fixture(scope="module")
 def amount(token):  # use today's exchange rates to have similar $$ amounts
     amount = 10 * (10 ** token.decimals())
@@ -122,6 +144,11 @@ def reward_token(accounts):
 @pytest.fixture(scope="module")
 def healthCheck():
     yield Contract("0xf13Cd6887C62B5beC145e30c38c4938c5E627fe0")
+
+
+@pytest.fixture(scope="module")
+def solidly_router():
+    yield Contract("0xa38cd27185a464914D3046f0AB9d43356B34829D")
 
 
 @pytest.fixture(scope="module")
@@ -190,10 +217,9 @@ def trade_factory():
 
 @pytest.fixture
 def woofy_filled_swapper(swapper, woofy_whale, woofy, strategist):
-    swapper.setTradePermission(woofy_whale, True, {'from': strategist})
-    woofy.approve(swapper, 2**256-1, {'from': woofy_whale})
-    swapper.provideLiquidity(woofy, 50e18, {'from': woofy_whale})
+
     yield swapper
+
 
 @pytest.fixture(scope="module")
 def management(accounts):
@@ -219,9 +245,11 @@ def strategist(accounts):
 # use this if you need to deploy the vault
 @pytest.fixture(scope="function")
 def vault(pm, gov, rewards, guardian, management, token, chain):
+    # network.gas_price(0)
+
     Vault = pm(config["dependencies"][0]).Vault
     vault = guardian.deploy(Vault)
-    vault.initialize(token, gov, rewards, "", "", guardian)
+    vault.initialize(token, gov, rewards, "", "", guardian, {'from': guardian})
     vault.setDepositLimit(2 ** 256 - 1, {"from": gov})
     vault.setManagement(management, {"from": gov})
     chain.sleep(1)
@@ -235,9 +263,16 @@ def vault(pm, gov, rewards, guardian, management, token, chain):
 #     yield vault
 
 @pytest.fixture(scope="function")
-def swapper(OTCTrader, strategist):
-    yield strategist.deploy(OTCTrader)
+def swapper(OTCTrader, strategy, strategist, woofy, whale, yfi, woofy_whale, gov):
+    swapper = OTCTrader.at(strategy.otcSwapper())
 
+    swapper.setTradePermission(woofy_whale, True, {'from': gov})
+    swapper.setTradePermission(whale, True, {'from': gov})
+    woofy.approve(swapper, 2**256-1, {'from': woofy_whale})
+    swapper.provideLiquidity(woofy, 50e18, {'from': woofy_whale})
+    yfi.approve(swapper, 2**256-1, {'from': whale})
+    swapper.provideLiquidity(yfi, 50e18, {'from': whale})
+    yield swapper
 
 
 # replace the first value with the name of your strategy
@@ -245,7 +280,6 @@ def swapper(OTCTrader, strategist):
 def strategy(
     Strategy,
     strategist,
-    swapper,
     keeper,
     vault,
     gov,
@@ -257,11 +291,10 @@ def strategy(
     strategy = strategist.deploy(
         Strategy,
         vault,
-        strategy_name,
-        swapper
+        strategy_name
 
     )
-    swapper.setTradePermission(strategy, True, {'from': strategist})
+    #swapper.setTradePermission(strategy, True, {'from': strategist})
     trade_factory.grantRole(
         trade_factory.STRATEGY(), strategy, {
             "from": ymechs_safe, "gas_price": "0 gwei"}

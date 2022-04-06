@@ -22,7 +22,7 @@ def test_migration(
     ymechs_safe
 ):
 
-    ## deposit to the vault after approving
+    # deposit to the vault after approving
     token.approve(vault, 2 ** 256 - 1, {"from": whale})
     vault.deposit(amount, {"from": whale})
     chain.sleep(1)
@@ -53,7 +53,8 @@ def test_migration(
     new_strategy.setHealthCheck(healthCheck, {"from": gov})
     new_strategy.setDoHealthCheck(True, {"from": gov})
     trade_factory.grantRole(
-        trade_factory.STRATEGY(), new_strategy, {"from": ymechs_safe, "gas_price": "0 gwei"}
+        trade_factory.STRATEGY(), new_strategy, {
+            "from": ymechs_safe, "gas_price": "0 gwei"}
     )
     # assert that our old strategy is empty
     updated_total_old = strategy.estimatedTotalAssets()
@@ -62,11 +63,11 @@ def test_migration(
     # harvest to get funds back in strategy
     chain.sleep(1)
     new_strategy.setDoHealthCheck(False, {"from": gov})
-    new_strategy.harvest({"from": gov})
+    tx1 = new_strategy.harvest({"from": gov})
     new_strat_balance = new_strategy.estimatedTotalAssets()
 
     # confirm we made money, or at least that we have about the same
-    assert new_strat_balance >= total_old or math.isclose(
+    assert new_strat_balance + tx1.events['Harvested']['profit'] >= total_old or math.isclose(
         new_strat_balance, total_old, abs_tol=5
     )
 
