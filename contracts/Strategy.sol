@@ -184,10 +184,10 @@ contract Strategy is BaseStrategy {
     address public stakingAddress = 
         address(0x2799e089550979D5E268559bEbca3990dCbeD18b);
 
-    IERC20 internal constant solidLp =
-        IERC20(0x4b3a172283ecB7d07AB881a9443d38cB1c98F4d0); // Solidly YFI/WOOFY
-    IERC20 internal constant oxLp =
-        IERC20(0x5473DE6376A5DA114DE21f63E673fE76e509e55C); // 0xDAO YFI/WOOFY
+    // IERC20 internal constant solidLp =
+    //     IERC20(0x4b3a172283ecB7d07AB881a9443d38cB1c98F4d0); // Solidly YFI/WOOFY
+    // IERC20 internal constant oxLp =
+    //     IERC20(0x5473DE6376A5DA114DE21f63E673fE76e509e55C); // 0xDAO YFI/WOOFY
 
     IERC20 internal constant yfi =
         IERC20(0x29b0Da86e484E1C0029B56e817912d778aC0EC69);
@@ -205,7 +205,7 @@ contract Strategy is BaseStrategy {
     uint256 immutable DENOMINATOR = 10_000;
 
     string internal stratName; // we use this for our strategy's name on cloning
-    address public lpToken = 0x4b3a172283ecB7d07AB881a9443d38cB1c98F4d0; //var yfi/woofy // This will disappear in a clone!
+    // address public lpToken = 0x4b3a172283ecB7d07AB881a9443d38cB1c98F4d0; //var yfi/woofy // This will disappear in a clone!
     IOxPool public oxPool =
         IOxPool(0x5473DE6376A5DA114DE21f63E673fE76e509e55C);
     IMultiRewards public multiRewards =
@@ -240,7 +240,7 @@ contract Strategy is BaseStrategy {
         minHarvestCredit = type(uint256).max;
 
         // add approvals on all tokens
-        IERC20(lpToken).approve(address(solidlyRouter), type(uint256).max);
+        IERC20(solidPoolAddress).approve(address(solidlyRouter), type(uint256).max);
         woofy.approve(address(solidlyRouter), type(uint256).max);
         yfi.approve(address(solidlyRouter), type(uint256).max);
         // NEW ONES
@@ -299,7 +299,7 @@ contract Strategy is BaseStrategy {
     //yfi and woofy are interchangeable 1-1. so we need our balance of each. added to whatever we can withdraw from lps
     function estimatedTotalAssets() public view override returns (uint256) {
         uint256 lpTokens = balanceOfLPStaked().add(
-            IERC20(lpToken).balanceOf(address(this))
+            IERC20(solidPoolAddress).balanceOf(address(this))
         );
 
         (uint256 amountYfi, uint256 amountWoofy) = balanceOfConstituents(
@@ -431,8 +431,8 @@ contract Strategy is BaseStrategy {
         view
         returns (address token, uint256 amount)
     {
-        uint256 yfiInLp = yfi.balanceOf(lpToken);
-        uint256 woofyInLp = woofy.balanceOf(lpToken);
+        uint256 yfiInLp = yfi.balanceOf(solidPoolAddress);
+        uint256 woofyInLp = woofy.balanceOf(solidPoolAddress);
 
         //if arb is less than fees then no arb
         if (
@@ -542,8 +542,8 @@ contract Strategy is BaseStrategy {
 
         _arbThePeg();
 
-        uint256 yfiInLp = yfi.balanceOf(lpToken);
-        uint256 woofyInLp = woofy.balanceOf(lpToken);
+        uint256 yfiInLp = yfi.balanceOf(solidPoolAddress);
+        uint256 woofyInLp = woofy.balanceOf(solidPoolAddress);
 
         if (
             yfiInLp.mul(DENOMINATOR) < woofyInLp.mul(lpSlippage) ||
@@ -584,13 +584,14 @@ contract Strategy is BaseStrategy {
             2**256 - 1
         );
 
-        uint256 lpBalance = IERC20(lpToken).balanceOf(address(this));
+        uint256 lpBalance = IERC20(solidPoolAddress).balanceOf(address(this));
+        uint256 oxBalance = IERC20(oxPoolAddress).balanceOf(address(this));
 
         if (lpBalance > 0) {	
             // Transfer Solidly LP to ox pool to receive Ox pool LP receipt token	
             oxPool.depositLp(lpBalance);	
             // Stake oxLP in multirewards	
-            multiRewards.stake(oxLp.balanceOf(address(this)));	
+            multiRewards.stake(oxBalance);	
         }
     }
 
@@ -639,7 +640,7 @@ contract Strategy is BaseStrategy {
             // converts this amount into lpTokens
             uint256 lpTokensNeeded = yfiToLpTokens(amountToFree);
 
-            uint256 balanceOfLpTokens = IERC20(lpToken).balanceOf(
+            uint256 balanceOfLpTokens = IERC20(solidPoolAddress).balanceOf(
                 address(this)
             );
 
@@ -659,7 +660,7 @@ contract Strategy is BaseStrategy {
                     oxPool.withdrawLp(Math.min(toWithdrawfromOxdao, oxLpBalance));
                 }
 
-                balanceOfLpTokens = IERC20(lpToken).balanceOf(address(this));
+                balanceOfLpTokens = IERC20(solidPoolAddress).balanceOf(address(this));
             }
 
             if (balanceOfLpTokens > 0) {
@@ -678,8 +679,8 @@ contract Strategy is BaseStrategy {
             //now we have a bunch of yfi and woofy
 
             //now we swap if we can at a profit
-            uint256 yfiInLp = yfi.balanceOf(lpToken);
-            uint256 woofyInLp = woofy.balanceOf(lpToken);
+            uint256 yfiInLp = yfi.balanceOf(solidPoolAddress);
+            uint256 woofyInLp = woofy.balanceOf(solidPoolAddress);
             if (yfiInLp > woofyInLp.add(dustThreshold)) {
                 //we can arb
                 _arbThePeg();
@@ -715,7 +716,7 @@ contract Strategy is BaseStrategy {
             address(yfi),
             address(woofy),
             false,
-            IERC20(lpToken).balanceOf(address(this)),
+            IERC20(solidPoolAddress).balanceOf(address(this)),
             0,
             0,
             address(this),
@@ -745,10 +746,10 @@ contract Strategy is BaseStrategy {
             }
         }
 
-        uint256 lpBalance = IERC20(lpToken).balanceOf(address(this));
+        uint256 lpBalance = IERC20(solidPoolAddress).balanceOf(address(this));
 
         if (lpBalance > 0) {
-            IERC20(lpToken).safeTransfer(_newStrategy, lpBalance);
+            IERC20(solidPoolAddress).safeTransfer(_newStrategy, lpBalance);
         }
 
         uint256 woofyBalance = woofy.balanceOf(address(this));
