@@ -772,46 +772,46 @@ contract Strategy is BaseStrategy {
         oxPool.withdrawLp(oxLpBalance);	
     }
     	
-    // Withdraw oxLP from multiRewards and Redeem/burn oxPool LP for Solidly LP	
-    function manualCompleteExit(uint256 amount)	
-        external	
-        onlyEmergencyAuthorized	
-    {	
-        _manualUnstake(amount);
-        // our balance of oxlp in oxPool
-        uint256 oxLpBalance = oxPool.balanceOf(address(this));
-        _manualWithdrawLP(Math.min(amount, oxLpBalance));
-    }
+    // // Withdraw oxLP from multiRewards and Redeem/burn oxPool LP for Solidly LP	
+    // function manualCompleteExit(uint256 amount)	
+    //     external	
+    //     onlyEmergencyAuthorized	
+    // {	
+    //     _manualUnstake(amount);
+    //     // our balance of oxlp in oxPool
+    //     uint256 oxLpBalance = oxPool.balanceOf(address(this));
+    //     _manualWithdrawLP(Math.min(amount, oxLpBalance));
+    // }
 
-    // Withdraw oxLP from multiRewards	
-    function manualUnstake(uint256 amount)
-        external	
-        onlyEmergencyAuthorized	
-    {	
-        _manualUnstake(amount);
-    }
+    // // Withdraw oxLP from multiRewards	
+    // function manualUnstake(uint256 amount)
+    //     external	
+    //     onlyEmergencyAuthorized	
+    // {	
+    //     _manualUnstake(amount);
+    // }
 
-    // Withdraw oxLP from multiRewards	
-    function _manualUnstake(uint256 amount)
-        internal	
-    {	
-        multiRewards.withdraw(amount);	
-    }
+    // // Withdraw oxLP from multiRewards	
+    // function _manualUnstake(uint256 amount)
+    //     internal	
+    // {	
+    //     multiRewards.withdraw(amount);	
+    // }
 
-    // Redeem/burn oxPool LP for Solidly LP	
-    function manualWithdrawLP(uint256 amount)	
-        external	
-        onlyEmergencyAuthorized	
-    {	
-        _manualWithdrawLP(amount);	
-    }
+    // // Redeem/burn oxPool LP for Solidly LP	
+    // function manualWithdrawLP(uint256 amount)	
+    //     external	
+    //     onlyEmergencyAuthorized	
+    // {	
+    //     _manualWithdrawLP(amount);	
+    // }
 
-    // Redeem/burn oxPool LP for Solidly LP	
-    function _manualWithdrawLP(uint256 amount)	
-        internal
-    {	
-        oxPool.withdrawLp(amount);	
-    }
+    // // Redeem/burn oxPool LP for Solidly LP	
+    // function _manualWithdrawLP(uint256 amount)	
+    //     internal
+    // {	
+    //     oxPool.withdrawLp(amount);	
+    // }
 
     function protectedTokens()
         internal
