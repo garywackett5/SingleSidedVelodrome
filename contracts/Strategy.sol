@@ -4,12 +4,108 @@
 // Feel free to change this version of Solidity. We support >=0.6.0 <0.7.0;
 pragma solidity 0.6.12;
 pragma experimental ABIEncoderV2;
-// Gary's Fork
+// Gary's Branch - YFI/WOOFY - 0xDAO
 // These are the core Yearn libraries
 import {BaseStrategy, StrategyParams} from "@yearnvaults/contracts/BaseStrategy.sol";
 import {SafeERC20, SafeMath, IERC20, Address} from "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import "@openzeppelin/contracts/math/Math.sol";
 import "./OTCTrader.sol";
+
+struct route {
+    address from;
+    address to;
+    bool stable;
+}
+
+interface IOxPool {
+    function stakingAddress() external view returns (address);
+
+    function solidPoolAddress() external view returns (address);
+
+    function depositLpAndStake(uint256) external;
+
+    function depositLp(uint256) external;
+
+    function withdrawLp(uint256) external;
+
+    function syncBribeTokens() external;
+
+    function notifyBribeOrFees() external;
+
+    function initialize(
+        address,
+        address,
+        address,
+        string memory,
+        string memory,
+        address,
+        address
+    ) external;
+
+    function gaugeAddress() external view returns (address);
+
+    function balanceOf(address) external view returns (uint256);
+
+    function transfer(address recipient, uint256 amount)
+        external
+        returns (bool);
+
+    function approve(address spender, uint256 amount) external returns (bool);
+}
+
+interface IMultiRewards {
+    struct Reward {
+        address rewardsDistributor;
+        uint256 rewardsDuration;
+        uint256 periodFinish;
+        uint256 rewardRate;
+        uint256 lastUpdateTime;
+        uint256 rewardPerTokenStored;
+    }
+
+    function stake(uint256) external;
+
+    function withdraw(uint256) external;
+
+    function getReward() external;
+
+    function stakingToken() external view returns (address);
+
+    function balanceOf(address) external view returns (uint256);
+
+    function earned(address, address) external view returns (uint256);
+
+    function initialize(address, address) external;
+
+    function rewardRate(address) external view returns (uint256);
+
+    function getRewardForDuration(address) external view returns (uint256);
+
+    function rewardPerToken(address) external view returns (uint256);
+
+    function rewardData(address) external view returns (Reward memory);
+
+    function rewardTokensLength() external view returns (uint256);
+
+    function rewardTokens(uint256) external view returns (address);
+
+    function totalSupply() external view returns (uint256);
+
+    function addReward(
+        address _rewardsToken,
+        address _rewardsDistributor,
+        uint256 _rewardsDuration
+    ) external;
+
+    function notifyRewardAmount(address, uint256) external;
+
+    function recoverERC20(address tokenAddress, uint256 tokenAmount) external;
+
+    function setRewardsDuration(address _rewardsToken, uint256 _rewardsDuration)
+        external;
+
+    function exit() external;
+}
 
 interface ISolidlyRouter {
     function addLiquidity(
@@ -63,19 +159,6 @@ interface ITradeFactory {
     function enable(address, address) external;
 }
 
-interface ILpDepositer {
-    function deposit(address pool, uint256 _amount) external;
-
-    function withdraw(address pool, uint256 _amount) external; // use amount = 0 for harvesting rewards
-
-    function userBalances(address user, address pool)
-        external
-        view
-        returns (uint256);
-
-    function getReward(address[] memory lps) external;
-}
-
 contract Strategy is BaseStrategy {
     using SafeERC20 for IERC20;
     using Address for address;
@@ -91,24 +174,39 @@ contract Strategy is BaseStrategy {
     bool public depositerAvoid;
     address public tradeFactory = 0xD3f89C21719Ec5961a3E6B0f9bBf9F9b4180E9e9;
 
+    address public solidPoolAddress = 
+        address(0x4b3a172283ecB7d07AB881a9443d38cB1c98F4d0);
+    address public oxPoolAddress = 
+        address(0x5473DE6376A5DA114DE21f63E673fE76e509e55C);
+    address public stakingAddress = 
+        address(0x2799e089550979D5E268559bEbca3990dCbeD18b);
+
+    IERC20 internal constant solidLp =
+        IERC20(0x4b3a172283ecB7d07AB881a9443d38cB1c98F4d0); // Solidly YFI/WOOFY
+    IERC20 internal constant oxLp =
+        IERC20(0x5473DE6376A5DA114DE21f63E673fE76e509e55C); // 0xDAO YFI/WOOFY
+
     IERC20 internal constant yfi =
         IERC20(0x29b0Da86e484E1C0029B56e817912d778aC0EC69);
     IERC20 internal constant woofy =
         IERC20(0xD0660cD418a64a1d44E9214ad8e459324D8157f1);
 
-    IERC20 internal constant sex =
-        IERC20(0xD31Fcd1f7Ba190dBc75354046F6024A9b86014d7);
     IERC20 internal constant solid =
         IERC20(0x888EF71766ca594DED1F0FA3AE64eD2941740A20);
+    IERC20 internal constant oxd =
+        IERC20(0xc5A9848b9d145965d821AaeC8fA32aaEE026492d);
 
+    // should we lower this???
     uint256 public lpSlippage = 9950; //0.5% slippage allowance
 
     uint256 immutable DENOMINATOR = 10_000;
 
     string internal stratName; // we use this for our strategy's name on cloning
     address public lpToken = 0x4b3a172283ecB7d07AB881a9443d38cB1c98F4d0; //var yfi/woofy // This will disappear in a clone!
-    ILpDepositer internal constant lpDepositer =
-        ILpDepositer(0x26E1A0d851CF28E697870e1b7F053B605C8b060F);
+    IOxPool public oxPool =
+        IOxPool(0x5473DE6376A5DA114DE21f63E673fE76e509e55C);
+    IMultiRewards public multiRewards =
+        IMultiRewards(0x2799e089550979D5E268559bEbca3990dCbeD18b);
     uint256 dustThreshold = 1e14;
 
     bool internal forceHarvestTriggerOnce; // only set this to true externally when we want to trigger our keepers to harvest for us
@@ -139,10 +237,12 @@ contract Strategy is BaseStrategy {
         minHarvestCredit = type(uint256).max;
 
         // add approvals on all tokens
-        IERC20(lpToken).approve(address(lpDepositer), type(uint256).max);
         IERC20(lpToken).approve(address(solidlyRouter), type(uint256).max);
         woofy.approve(address(solidlyRouter), type(uint256).max);
         yfi.approve(address(solidlyRouter), type(uint256).max);
+        // NEW ONES
+        IERC20(solidPoolAddress).approve(oxPoolAddress, type(uint256).max);
+        IERC20(oxPoolAddress).approve(stakingAddress, type(uint256).max);
 
         OTCTrader _trader = new OTCTrader(governance());
         _setupOTCTrader(address(_trader));
@@ -159,12 +259,24 @@ contract Strategy is BaseStrategy {
         return want.balanceOf(address(this));
     }
 
+    // balance of woofy in strat - should be zero most of the time
     function balanceOfWoofy() public view returns (uint256) {
         return woofy.balanceOf(address(this));
     }
 
+    // view our balance of unstaked oxLP tokens - should be zero most of the time
+    function balanceOfOxPool() public view returns (uint256) {
+        return oxPool.balanceOf(address(this));
+    }
+
+    // view our balance of staked oxLP tokens
+    function balanceOfMultiRewards() public view returns (uint256) {
+        return multiRewards.balanceOf(address(this));
+    }
+
+    // view our balance of unstaked and staked oxLP tokens
     function balanceOfLPStaked() public view returns (uint256) {
-        return lpDepositer.userBalances(address(this), lpToken);
+        return balanceOfOxPool().add(balanceOfMultiRewards());
     }
 
     function balanceOfConstituents(uint256 liquidity)
@@ -176,11 +288,12 @@ contract Strategy is BaseStrategy {
             .quoteRemoveLiquidity(
                 address(yfi),
                 address(woofy),
-                false,
+                false, // volatile pool
                 liquidity
             );
     }
 
+    //yfi and woofy are interchangeable 1-1. so we need our balance of each. added to whatever we can withdraw from lps
     function estimatedTotalAssets() public view override returns (uint256) {
         uint256 lpTokens = balanceOfLPStaked().add(
             IERC20(lpToken).balanceOf(address(this))
@@ -190,12 +303,13 @@ contract Strategy is BaseStrategy {
             lpTokens
         );
 
-        // balance of woofy is already in yfi
-        uint256 balanceOfWoofyinYfi = amountWoofy.add(balanceOfWoofy());
-
-        // look at our staked tokens and any free tokens sitting in the strategy
-        return balanceOfWoofyinYfi.add(balanceOfWant()).add(amountYfi);
+        return	
+            amountWoofy.add(balanceOfWoofy()).add(balanceOfWant()).add(	
+                amountYfi	
+            );	
     }
+
+    
 
     // NOT TRUE ANYMORE... our main trigger is regarding our DCA since there is low liquidity for our emissionToken
     function harvestTrigger(uint256 callCostinEth)
@@ -469,19 +583,6 @@ contract Strategy is BaseStrategy {
 
         //deposit to lp depositer
         lpDepositer.deposit(lpToken, IERC20(lpToken).balanceOf(address(this)));
-    }
-
-    function _setUpTradeFactory() internal {
-        //approve and set up trade factory
-        address _tradeFactory = tradeFactory;
-
-        ITradeFactory tf = ITradeFactory(_tradeFactory);
-        sex.safeApprove(_tradeFactory, type(uint256).max);
-        tf.enable(address(sex), address(want));
-
-        solid.safeApprove(_tradeFactory, type(uint256).max);
-        tf.enable(address(solid), address(want));
-        tradesEnabled = true;
     }
 
     //returns lp tokens needed to get that amount of yfi
