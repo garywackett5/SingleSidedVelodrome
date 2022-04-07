@@ -267,6 +267,11 @@ contract Strategy is BaseStrategy {
         return woofy.balanceOf(address(this));
     }
 
+    // view our balance of unstaked solidLP tokens - should be zero most of the time
+    function balanceOfsolidPool() public view returns (uint256) {
+        return IERC20(solidPoolAddress).balanceOf(address(this));
+    }
+
     // view our balance of unstaked oxLP tokens - should be zero most of the time
     function balanceOfOxPool() public view returns (uint256) {
         return oxPool.balanceOf(address(this));
@@ -299,7 +304,7 @@ contract Strategy is BaseStrategy {
     //yfi and woofy are interchangeable 1-1. so we need our balance of each. added to whatever we can withdraw from lps
     function estimatedTotalAssets() public view override returns (uint256) {
         uint256 lpTokens = balanceOfLPStaked().add(
-            IERC20(solidPoolAddress).balanceOf(address(this))
+            balanceOfsolidPool()
         );
 
         (uint256 amountYfi, uint256 amountWoofy) = balanceOfConstituents(
@@ -395,7 +400,7 @@ contract Strategy is BaseStrategy {
         if (wantBal < amountToFree) {
             liquidatePosition(amountToFree);
 
-            uint256 newLoose = want.balanceOf(address(this));
+            uint256 newLoose = balanceOfWant();
 
             //if we dont have enough money adjust _debtOutstanding and only change profit if needed
             if (newLoose < amountToFree) {
@@ -584,12 +589,13 @@ contract Strategy is BaseStrategy {
             2**256 - 1
         );
 
-        uint256 lpBalance = IERC20(solidPoolAddress).balanceOf(address(this));
-        uint256 oxBalance = IERC20(oxPoolAddress).balanceOf(address(this));
+        uint256 lpBalance = balanceOfsolidPool();
 
         if (lpBalance > 0) {	
             // Transfer Solidly LP to ox pool to receive Ox pool LP receipt token	
-            oxPool.depositLp(lpBalance);	
+            oxPool.depositLp(lpBalance);
+
+            uint256 oxBalance = balanceOfOxPool();
             // Stake oxLP in multirewards	
             multiRewards.stake(oxBalance);	
         }
@@ -630,7 +636,7 @@ contract Strategy is BaseStrategy {
         override
         returns (uint256 _liquidatedAmount, uint256 _loss)
     {
-        uint256 balanceOfYfi = want.balanceOf(address(this));
+        uint256 balanceOfYfi = balanceOfWant();
 
         // if we need more yfi than is already loose in the contract
         if (balanceOfYfi < _amountNeeded) {
@@ -655,12 +661,12 @@ contract Strategy is BaseStrategy {
                     // Withdraw oxLP from multiRewards	
                     multiRewards.withdraw(Math.min(toWithdrawfromOxdao, staked));	
                     // our balance of oxlp in oxPool	
-                    uint256 oxLpBalance = oxPool.balanceOf(address(this));	
+                    uint256 oxLpBalance = balanceOfOxPool();	
                     // Redeem/burn oxPool LP for Solidly LP	
                     oxPool.withdrawLp(Math.min(toWithdrawfromOxdao, oxLpBalance));
                 }
 
-                balanceOfLpTokens = IERC20(solidPoolAddress).balanceOf(address(this));
+                balanceOfLpTokens = balanceOfsolidPool();
             }
 
             if (balanceOfLpTokens > 0) {
@@ -686,7 +692,7 @@ contract Strategy is BaseStrategy {
                 _arbThePeg();
             }
 
-            balanceOfYfi = want.balanceOf(address(this));
+            balanceOfYfi = balanceOfWant();
             if (balanceOfYfi < _amountNeeded) {
                 balanceOfYfi = _getFromOTC(yfi, _amountNeeded - balanceOfYfi);
             }
@@ -708,7 +714,7 @@ contract Strategy is BaseStrategy {
             // Withdraw oxLP from multiRewards	
             multiRewards.withdraw(staked);	
             // our balance of oxlp in oxPool	
-            uint256 oxLpBalance = oxPool.balanceOf(address(this));	
+            uint256 oxLpBalance = balanceOfOxPool();	
             // Redeem/burn oxPool LP for Solidly LP	
             oxPool.withdrawLp(oxLpBalance);
         }
@@ -716,7 +722,7 @@ contract Strategy is BaseStrategy {
             address(yfi),
             address(woofy),
             false,
-            IERC20(solidPoolAddress).balanceOf(address(this)),
+            balanceOfsolidPool(),
             0,
             0,
             address(this),
@@ -740,19 +746,19 @@ contract Strategy is BaseStrategy {
                 // Withdraw oxLP from multiRewards	
                 multiRewards.withdraw(staked);	
                 // our balance of oxlp in oxPool	
-                uint256 oxLpBalance = oxPool.balanceOf(address(this));	
+                uint256 oxLpBalance = balanceOfOxPool();	
                 // Redeem/burn oxPool LP for Solidly LP	
                 oxPool.withdrawLp(oxLpBalance);
             }
         }
 
-        uint256 lpBalance = IERC20(solidPoolAddress).balanceOf(address(this));
+        uint256 lpBalance = balanceOfsolidPool();
 
         if (lpBalance > 0) {
             IERC20(solidPoolAddress).safeTransfer(_newStrategy, lpBalance);
         }
 
-        uint256 woofyBalance = woofy.balanceOf(address(this));
+        uint256 woofyBalance = balanceOfWoofy();
 
         if (woofyBalance > 0) {
             // send our total balance of woofy to the new strategy
@@ -768,7 +774,7 @@ contract Strategy is BaseStrategy {
         // Withdraw all oxLP (and rewards) from multiRewards	
         multiRewards.exit();	
         // our balance of oxlp in oxPool	
-        uint256 oxLpBalance = oxPool.balanceOf(address(this));	
+        uint256 oxLpBalance = balanceOfOxPool();	
         // Redeem/burn oxPool LP for Solidly LP	
         oxPool.withdrawLp(oxLpBalance);	
     }
@@ -780,39 +786,39 @@ contract Strategy is BaseStrategy {
     // {	
     //     _manualUnstake(amount);
     //     // our balance of oxlp in oxPool
-    //     uint256 oxLpBalance = oxPool.balanceOf(address(this));
+    //     uint256 oxLpBalance = balanceOfOxPool();
     //     _manualWithdrawLP(Math.min(amount, oxLpBalance));
     // }
 
-    // // Withdraw oxLP from multiRewards	
-    // function manualUnstake(uint256 amount)
-    //     external	
-    //     onlyEmergencyAuthorized	
-    // {	
-    //     _manualUnstake(amount);
-    // }
+    // Withdraw oxLP from multiRewards	
+    function manualUnstake(uint256 amount)
+        external	
+        onlyEmergencyAuthorized	
+    {	
+        _manualUnstake(amount);
+    }
 
-    // // Withdraw oxLP from multiRewards	
-    // function _manualUnstake(uint256 amount)
-    //     internal	
-    // {	
-    //     multiRewards.withdraw(amount);	
-    // }
+    // Withdraw oxLP from multiRewards	
+    function _manualUnstake(uint256 amount)
+        internal	
+    {	
+        multiRewards.withdraw(amount);	
+    }
 
-    // // Redeem/burn oxPool LP for Solidly LP	
-    // function manualWithdrawLP(uint256 amount)	
-    //     external	
-    //     onlyEmergencyAuthorized	
-    // {	
-    //     _manualWithdrawLP(amount);	
-    // }
+    // Redeem/burn oxPool LP for Solidly LP	
+    function manualWithdrawLP(uint256 amount)	
+        external	
+        onlyEmergencyAuthorized	
+    {	
+        _manualWithdrawLP(amount);	
+    }
 
-    // // Redeem/burn oxPool LP for Solidly LP	
-    // function _manualWithdrawLP(uint256 amount)	
-    //     internal
-    // {	
-    //     oxPool.withdrawLp(amount);	
-    // }
+    // Redeem/burn oxPool LP for Solidly LP	
+    function _manualWithdrawLP(uint256 amount)	
+        internal
+    {	
+        oxPool.withdrawLp(amount);	
+    }
 
     function protectedTokens()
         internal

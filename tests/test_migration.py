@@ -19,7 +19,8 @@ def test_migration(
     amount,
     strategy_name,
     trade_factory,
-    ymechs_safe
+    ymechs_safe,
+    swapper
 ):
 
     # deposit to the vault after approving
@@ -35,6 +36,7 @@ def test_migration(
         Strategy,
         vault,
         strategy_name,
+        swapper
     )
     total_old = strategy.estimatedTotalAssets()
 

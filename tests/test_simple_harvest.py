@@ -13,7 +13,7 @@ def test_simple_harvest(gov,
                         chain,
                         woofy_filled_swapper,
                         strategist_ms,
-                        sex,
+                        oxd,
                         solid,
                         woofy,
                         yfi,
@@ -63,7 +63,7 @@ def test_simple_harvest(gov,
     strategy.setDoHealthCheck(False, {"from": gov})
     strategy.harvest({"from": gov})
 
-    assert sex.balanceOf(strategy) > 0
+    assert oxd.balanceOf(strategy) > 0
     assert solid.balanceOf(strategy) > 0
     chain.sleep(1)
 

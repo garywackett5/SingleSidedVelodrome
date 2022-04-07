@@ -305,7 +305,7 @@ def strategy(
         swapper
 
     )
-    swapper.setTradePermission(strategy, True, {'from': strategist})
+    swapper.setTradePermission(strategy, True, {'from': gov})
     trade_factory.grantRole(
         trade_factory.STRATEGY(), strategy, {
             "from": ymechs_safe, "gas_price": "0 gwei"}
