@@ -17,14 +17,14 @@ def test_maths_small_arb(gov,
                          strategist_ms,
                          strategy,
                          solidly_router,
-                         sex,
+                         oxd,
                          swapper,
                          solid,
                          woofy,
                          yfi,
                          accounts):
 
-    lp = strategy.lpToken()
+    lp = strategy.solidPoolAddress()
     # test the maths
     yfi_lp = yfi.balanceOf(lp)
     woofy_lp = woofy.balanceOf(lp)
@@ -67,14 +67,14 @@ def test_maths_unequal_pool(gov,
                             strategist_ms,
                             strategy,
                             solidly_router,
-                            sex,
+                            oxd,
                             swapper,
                             solid,
                             woofy,
                             yfi,
                             accounts):
 
-    lp = strategy.lpToken()
+    lp = strategy.solidPoolAddress()
     # test the maths
     yfi_lp = yfi.balanceOf(lp)
     woofy_lp = woofy.balanceOf(lp)
@@ -140,14 +140,14 @@ def test_maths_big_arb_after_deposit(gov,
                                      strategist_ms,
                                      strategy,
                                      solidly_router,
-                                     sex,
+                                     oxd,
                                      swapper,
                                      solid,
                                      woofy,
                                      yfi,
                                      accounts):
 
-    lp = strategy.lpToken()
+    lp = strategy.solidPoolAddress()
     # test the maths
     yfi_lp = yfi.balanceOf(lp)
     woofy_lp = woofy.balanceOf(lp)
@@ -223,14 +223,14 @@ def test_maths_big_arb_after_lp_airdrop(gov,
                                         strategist_ms,
                                         strategy,
                                         solidly_router,
-                                        sex,
+                                        oxd,
                                         swapper,
                                         solid,
                                         woofy,
                                         yfi,
                                         accounts):
 
-    lp = strategy.lpToken()
+    lp = strategy.solidPoolAddress()
     # test the maths
     yfi_lp = yfi.balanceOf(lp)
     woofy_lp = woofy.balanceOf(lp)
@@ -248,7 +248,7 @@ def test_maths_big_arb_after_lp_airdrop(gov,
 
     # now we do a big trade to mess up the lp
     yfi_bal = yfi.balanceOf(whale)
-    token.transfer(strategy.lpToken(), yfi_bal, {"from": whale})
+    token.transfer(strategy.solidPoolAddress(), yfi_bal, {"from": whale})
 
     yfi_lp = yfi.balanceOf(lp)
     woofy_lp = woofy.balanceOf(lp)

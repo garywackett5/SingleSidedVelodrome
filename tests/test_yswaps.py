@@ -26,7 +26,7 @@ def test_yswap(
     spooky_router,
     trade_factory,
     whale,
-    sex,
+    oxd,
     solid,
     multicall_swapper,
     strategist_ms
