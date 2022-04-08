@@ -205,7 +205,7 @@ contract Strategy is BaseStrategy {
     uint256 immutable DENOMINATOR = 10_000;
 
     string internal stratName; // we use this for our strategy's name on cloning
-    // address public lpToken = 0x4b3a172283ecB7d07AB881a9443d38cB1c98F4d0; //var yfi/woofy // This will disappear in a clone!
+
     IOxPool public oxPool =
         IOxPool(0x5473DE6376A5DA114DE21f63E673fE76e509e55C);
     IMultiRewards public multiRewards =
@@ -647,8 +647,7 @@ contract Strategy is BaseStrategy {
                 // converts this amount into lpTokens
                 uint256 lpTokensNeeded = yfiToLpTokens(amountToFree);
 
-                uint256 balanceOfLpTokens = IERC20(solidPoolAddress).balanceOf(
-                    address(this)
+                uint256 balanceOfLpTokens = balanceOfsolidPool()
                 );
 
                 if (balanceOfLpTokens < lpTokensNeeded) {

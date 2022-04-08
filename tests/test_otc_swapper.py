@@ -123,7 +123,7 @@ def test_otc_swapper_to_withdraw(gov,
     print(woofy.balanceOf(strategy))
     print(yfi.balanceOf(vault))
     # added -2 just to see if there are any other failures
-    assert woofy.balanceOf(strategy) == yfi.balanceOf(vault) - airdrop - 2
+    assert woofy.balanceOf(strategy) == yfi.balanceOf(vault) - airdrop - 1
 
     yfi.transfer(swapper, yfi.balanceOf(gov), {"from": gov})
 
