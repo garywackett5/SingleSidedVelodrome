@@ -184,11 +184,6 @@ contract Strategy is BaseStrategy {
     address public stakingAddress = 
         address(0x2799e089550979D5E268559bEbca3990dCbeD18b);
 
-    // IERC20 internal constant solidLp =
-    //     IERC20(0x4b3a172283ecB7d07AB881a9443d38cB1c98F4d0); // Solidly YFI/WOOFY
-    // IERC20 internal constant oxLp =
-    //     IERC20(0x5473DE6376A5DA114DE21f63E673fE76e509e55C); // 0xDAO YFI/WOOFY
-
     IERC20 internal constant yfi =
         IERC20(0x29b0Da86e484E1C0029B56e817912d778aC0EC69);
     IERC20 internal constant woofy =
@@ -447,7 +442,6 @@ contract Strategy is BaseStrategy {
             return (address(yfi), 0);
         }
 
-        //sqrt(yfiInLp*woofyInLp)-smaller
         //this should return to peg ignoring fees
         uint256 sq = sqrt(yfiInLp.mul(woofyInLp));
 
@@ -779,17 +773,6 @@ contract Strategy is BaseStrategy {
         // Redeem/burn oxPool LP for Solidly LP	
         oxPool.withdrawLp(oxLpBalance);	
     }
-    	
-    // // Withdraw oxLP from multiRewards and Redeem/burn oxPool LP for Solidly LP	
-    // function manualCompleteExit(uint256 amount)	
-    //     external	
-    //     onlyEmergencyAuthorized	
-    // {	
-    //     _manualUnstake(amount);
-    //     // our balance of oxlp in oxPool
-    //     uint256 oxLpBalance = balanceOfOxPool();
-    //     _manualWithdrawLP(Math.min(amount, oxLpBalance));
-    // }
 
     // Withdraw oxLP from multiRewards	
     function manualUnstake(uint256 amount)
