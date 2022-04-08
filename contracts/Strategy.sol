@@ -926,7 +926,7 @@ contract Strategy is BaseStrategy {
         depositerAvoid = _avoid;
     }
 
-    function setDusetThreshold(uint256 _dust) external onlyEmergencyAuthorized {
+    function setDustThreshold(uint256 _dust) external onlyEmergencyAuthorized {
         dustThreshold = _dust;
     }
 }
