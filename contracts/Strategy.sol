@@ -621,7 +621,7 @@ contract Strategy is BaseStrategy {
             1e18
         );
 
-        //1 lp token is this amoubt of boo
+        //1 lp token is this amount of yfi
         amountYfiPerLp = amountYfiPerLp.add(amountWoofy);
 
         uint256 lpTokensWeNeed = amountOfYfiWeWant.mul(1e18).div(
@@ -643,64 +643,66 @@ contract Strategy is BaseStrategy {
             // yfi needed beyond any yfi that is already loose in the contract
             uint256 amountToFree = _amountNeeded.sub(balanceOfYfi);
 
-            // converts this amount into lpTokens
-            uint256 lpTokensNeeded = yfiToLpTokens(amountToFree);
+            if (amountToFree > dustThreshold) {
+                // converts this amount into lpTokens
+                uint256 lpTokensNeeded = yfiToLpTokens(amountToFree);
 
-            uint256 balanceOfLpTokens = IERC20(solidPoolAddress).balanceOf(
-                address(this)
-            );
-
-            if (balanceOfLpTokens < lpTokensNeeded) {
-                uint256 toWithdrawfromOxdao = lpTokensNeeded.sub(
-                    balanceOfLpTokens
+                uint256 balanceOfLpTokens = IERC20(solidPoolAddress).balanceOf(
+                    address(this)
                 );
 
-                 // balance of oxlp staked in multiRewards
-                uint256 staked = balanceOfLPStaked();
-                if (staked > 0) {
-                    // Withdraw oxLP from multiRewards	
-                    multiRewards.withdraw(Math.min(toWithdrawfromOxdao, staked));	
-                    // our balance of oxlp in oxPool	
-                    uint256 oxLpBalance = balanceOfOxPool();	
-                    // Redeem/burn oxPool LP for Solidly LP	
-                    oxPool.withdrawLp(Math.min(toWithdrawfromOxdao, oxLpBalance));
+                if (balanceOfLpTokens < lpTokensNeeded) {
+                    uint256 toWithdrawfromOxdao = lpTokensNeeded.sub(
+                        balanceOfLpTokens
+                    );
+
+                    // balance of oxlp staked in multiRewards
+                    uint256 staked = balanceOfLPStaked();
+                    if (staked > 0) {
+                        // Withdraw oxLP from multiRewards	
+                        multiRewards.withdraw(Math.min(toWithdrawfromOxdao, staked));	
+                        // our balance of oxlp in oxPool	
+                        uint256 oxLpBalance = balanceOfOxPool();	
+                        // Redeem/burn oxPool LP for Solidly LP	
+                        oxPool.withdrawLp(Math.min(toWithdrawfromOxdao, oxLpBalance));
+                    }
+
+                    balanceOfLpTokens = balanceOfsolidPool();
                 }
 
-                balanceOfLpTokens = balanceOfsolidPool();
-            }
+                if (balanceOfLpTokens > 0) {
+                    ISolidlyRouter(solidlyRouter).removeLiquidity(
+                        address(yfi),
+                        address(woofy),
+                        false,
+                        Math.min(lpTokensNeeded, balanceOfLpTokens),
+                        0,
+                        0,
+                        address(this),
+                        type(uint256).max
+                    );
+                }
 
-            if (balanceOfLpTokens > 0) {
-                ISolidlyRouter(solidlyRouter).removeLiquidity(
-                    address(yfi),
-                    address(woofy),
-                    false,
-                    Math.min(lpTokensNeeded, balanceOfLpTokens),
-                    0,
-                    0,
-                    address(this),
-                    type(uint256).max
-                );
-            }
+                //now we have a bunch of yfi and woofy
 
-            //now we have a bunch of yfi and woofy
+                //now we swap if we can at a profit
+                uint256 yfiInLp = yfi.balanceOf(solidPoolAddress);
+                uint256 woofyInLp = woofy.balanceOf(solidPoolAddress);
+                if (yfiInLp > woofyInLp.add(dustThreshold)) {
+                    //we can arb
+                    _arbThePeg();
+                }
 
-            //now we swap if we can at a profit
-            uint256 yfiInLp = yfi.balanceOf(solidPoolAddress);
-            uint256 woofyInLp = woofy.balanceOf(solidPoolAddress);
-            if (yfiInLp > woofyInLp.add(dustThreshold)) {
-                //we can arb
-                _arbThePeg();
-            }
+                balanceOfYfi = balanceOfWant();
+                if (balanceOfYfi < _amountNeeded) {
+                    balanceOfYfi = _getFromOTC(yfi, _amountNeeded - balanceOfYfi);
+                }
 
-            balanceOfYfi = balanceOfWant();
-            if (balanceOfYfi < _amountNeeded) {
-                balanceOfYfi = _getFromOTC(yfi, _amountNeeded - balanceOfYfi);
-            }
+                _liquidatedAmount = Math.min(balanceOfYfi, _amountNeeded);
 
-            _liquidatedAmount = Math.min(balanceOfYfi, _amountNeeded);
-
-            if (_liquidatedAmount < _amountNeeded) {
-                _loss = _amountNeeded.sub(_liquidatedAmount);
+                if (_liquidatedAmount < _amountNeeded) {
+                    _loss = _amountNeeded.sub(_liquidatedAmount);
+                }
             }
         } else {
             _liquidatedAmount = _amountNeeded;

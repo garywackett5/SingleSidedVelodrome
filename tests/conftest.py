@@ -268,7 +268,7 @@ def vault(pm, gov, rewards, guardian, management, token, chain):
 #     yield vault
 
 @pytest.fixture(scope="function")
-def swapper(OTCTrader, strategist, woofy, whale, yfi, woofy_whale, gov):
+def swapper(OTCTrader, strategist, woofy, whale, yfi, woofy_whale, gov, strategy_name):
     swapper = gov.deploy(
         OTCTrader,
         gov

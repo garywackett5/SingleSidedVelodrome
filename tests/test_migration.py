@@ -65,11 +65,12 @@ def test_migration(
     # harvest to get funds back in strategy
     chain.sleep(1)
     new_strategy.setDoHealthCheck(False, {"from": gov})
+    swapper.setTradePermission(new_strategy, True, {'from': gov})
     tx1 = new_strategy.harvest({"from": gov})
     new_strat_balance = new_strategy.estimatedTotalAssets()
 
     # confirm we made money, or at least that we have about the same
-    assert new_strat_balance + tx1.events['Harvested']['profit'] >= total_old or math.isclose(
+    assert new_strat_balance + tx1.events['Harvested']['profit'] + 1 >= total_old or math.isclose(
         new_strat_balance, total_old, abs_tol=5
     )
 
@@ -79,6 +80,7 @@ def test_migration(
     # simulate one day of earnings
     chain.sleep(86400)
     chain.mine(1)
+    print(new_strategy.estimatedTotalAssets() - vault.strategies(new_strategy).dict()["totalDebt"])
 
     # Test out our migrated strategy, confirm we're making a profit
     new_strategy.setDoHealthCheck(False, {"from": gov})
