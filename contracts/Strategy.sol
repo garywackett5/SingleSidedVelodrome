@@ -10,12 +10,6 @@ import {BaseStrategy, StrategyParams} from "@yearnvaults/contracts/BaseStrategy.
 import {SafeERC20, SafeMath, IERC20, Address} from "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import "@openzeppelin/contracts/math/Math.sol";
 
-struct route {
-    address from;
-    address to;
-    bool stable;
-}
-
 interface IOTCTrader {
     function trade(address _tokenIn, uint256 _amount) external;
 }
@@ -194,8 +188,7 @@ contract Strategy is BaseStrategy {
     IERC20 internal constant oxd =
         IERC20(0xc5A9848b9d145965d821AaeC8fA32aaEE026492d);
 
-    // should we lower this???
-    uint256 public lpSlippage = 9950; //0.5% slippage allowance
+    uint256 public lpSlippage = 9995; //0.05% slippage allowance
 
     uint256 immutable DENOMINATOR = 10_000;
 
@@ -641,8 +634,7 @@ contract Strategy is BaseStrategy {
                 // converts this amount into lpTokens
                 uint256 lpTokensNeeded = yfiToLpTokens(amountToFree);
 
-                uint256 balanceOfLpTokens = balanceOfsolidPool()
-                );
+                uint256 balanceOfLpTokens = balanceOfsolidPool();
 
                 if (balanceOfLpTokens < lpTokensNeeded) {
                     uint256 toWithdrawfromOxdao = lpTokensNeeded.sub(
