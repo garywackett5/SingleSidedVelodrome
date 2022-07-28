@@ -4,107 +4,13 @@
 // Feel free to change this version of Solidity. We support >=0.6.0 <0.7.0;
 pragma solidity 0.6.12;
 pragma experimental ABIEncoderV2;
-// Gary's Branch - YFI/WOOFY - 0xDAO
+// Gary's Velodrome Branch (Optimism)
 // These are the core Yearn libraries
 import {BaseStrategy, StrategyParams} from "@yearnvaults/contracts/BaseStrategy.sol";
 import {SafeERC20, SafeMath, IERC20, Address} from "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import "@openzeppelin/contracts/math/Math.sol";
 
-interface IOTCTrader {
-    function trade(address _tokenIn, uint256 _amount) external;
-}
-
-interface IOxPool {
-    function stakingAddress() external view returns (address);
-
-    function solidPoolAddress() external view returns (address);
-
-    function depositLpAndStake(uint256) external;
-
-    function depositLp(uint256) external;
-
-    function withdrawLp(uint256) external;
-
-    function syncBribeTokens() external;
-
-    function notifyBribeOrFees() external;
-
-    function initialize(
-        address,
-        address,
-        address,
-        string memory,
-        string memory,
-        address,
-        address
-    ) external;
-
-    function gaugeAddress() external view returns (address);
-
-    function balanceOf(address) external view returns (uint256);
-
-    function transfer(address recipient, uint256 amount)
-        external
-        returns (bool);
-
-    function approve(address spender, uint256 amount) external returns (bool);
-}
-
-interface IMultiRewards {
-    struct Reward {
-        address rewardsDistributor;
-        uint256 rewardsDuration;
-        uint256 periodFinish;
-        uint256 rewardRate;
-        uint256 lastUpdateTime;
-        uint256 rewardPerTokenStored;
-    }
-
-    function stake(uint256) external;
-
-    function withdraw(uint256) external;
-
-    function getReward() external;
-
-    function stakingToken() external view returns (address);
-
-    function balanceOf(address) external view returns (uint256);
-
-    function earned(address, address) external view returns (uint256);
-
-    function initialize(address, address) external;
-
-    function rewardRate(address) external view returns (uint256);
-
-    function getRewardForDuration(address) external view returns (uint256);
-
-    function rewardPerToken(address) external view returns (uint256);
-
-    function rewardData(address) external view returns (Reward memory);
-
-    function rewardTokensLength() external view returns (uint256);
-
-    function rewardTokens(uint256) external view returns (address);
-
-    function totalSupply() external view returns (uint256);
-
-    function addReward(
-        address _rewardsToken,
-        address _rewardsDistributor,
-        uint256 _rewardsDuration
-    ) external;
-
-    function notifyRewardAmount(address, uint256) external;
-
-    function recoverERC20(address tokenAddress, uint256 tokenAmount) external;
-
-    function setRewardsDuration(address _rewardsToken, uint256 _rewardsDuration)
-        external;
-
-    function exit() external;
-}
-
-interface ISolidlyRouter {
+interface IVelodromeRouter {
     function addLiquidity(
         address,
         address,
@@ -140,16 +46,6 @@ interface ISolidlyRouter {
         bool stable,
         uint256 liquidity
     ) external view returns (uint256 amountA, uint256 amountB);
-
-    function swapExactTokensForTokensSimple(
-        uint256 amountIn,
-        uint256 amountOutMin,
-        address tokenFrom,
-        address tokenTo,
-        bool stable,
-        address to,
-        uint256 deadline
-    ) external returns (uint256[] memory amounts);
 }
 
 interface ITradeFactory {
@@ -164,29 +60,27 @@ contract Strategy is BaseStrategy {
     /* ========== STATE VARIABLES ========== */
 
     // swap stuff
-    address internal constant solidlyRouter =
-        0xa38cd27185a464914D3046f0AB9d43356B34829D;
+    address internal constant velodromeRouter =
+        0xa132DAB612dB5cB9fC9Ac426A0Cc215A3423F9c9;
     bool public tradesEnabled;
     bool public realiseLosses;
     bool public depositerAvoid;
-    address public tradeFactory = 0xD3f89C21719Ec5961a3E6B0f9bBf9F9b4180E9e9;
+    // address public tradeFactory = 0xD3f89C21719Ec5961a3E6B0f9bBf9F9b4180E9e9;
 
-    address public solidPoolAddress = 
-        address(0x4b3a172283ecB7d07AB881a9443d38cB1c98F4d0);
-    address public oxPoolAddress = 
+    address public velodromePoolAddress = 
+        address(0x4F7ebc19844259386DBdDB7b2eB759eeFc6F8353); // StableV1 AMM - USDC/DAI
+    // address public oxPoolAddress = 
         address(0x5473DE6376A5DA114DE21f63E673fE76e509e55C);
-    address public stakingAddress = 
+    // address public stakingAddress = 
         address(0x2799e089550979D5E268559bEbca3990dCbeD18b);
 
-    IERC20 internal constant yfi =
-        IERC20(0x29b0Da86e484E1C0029B56e817912d778aC0EC69);
-    IERC20 internal constant woofy =
-        IERC20(0xD0660cD418a64a1d44E9214ad8e459324D8157f1);
+    IERC20 internal constant usdc =
+        IERC20(0x7F5c764cBc14f9669B88837ca1490cCa17c31607);
+    IERC20 internal constant dai =
+        IERC20(0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1);
 
-    IERC20 internal constant solid =
-        IERC20(0x888EF71766ca594DED1F0FA3AE64eD2941740A20);
-    IERC20 internal constant oxd =
-        IERC20(0xc5A9848b9d145965d821AaeC8fA32aaEE026492d);
+    IERC20 internal constant velo =
+        IERC20(0x3c8B650257cFb5f272f799F5e2b4e65093a11a05);
 
     uint256 public lpSlippage = 9995; //0.05% slippage allowance
 
@@ -194,32 +88,31 @@ contract Strategy is BaseStrategy {
 
     string internal stratName; // we use this for our strategy's name on cloning
 
-    IOxPool public oxPool =
+    // IOxPool public oxPool =
         IOxPool(0x5473DE6376A5DA114DE21f63E673fE76e509e55C);
-    IMultiRewards public multiRewards =
+    // IMultiRewards public multiRewards =
         IMultiRewards(0x2799e089550979D5E268559bEbca3990dCbeD18b);
     uint256 dustThreshold = 1e14;
 
     bool internal forceHarvestTriggerOnce; // only set this to true externally when we want to trigger our keepers to harvest for us
     uint256 public minHarvestCredit; // if we hit this amount of credit, harvest the strategy
-    IOTCTrader public otcSwapper;
 
     bool public takeLosses;
 
     /* ========== CONSTRUCTOR ========== */
 
-    constructor(address _vault, string memory _name, address _otctrader)
+    constructor(address _vault, string memory _name)
         public
         BaseStrategy(_vault)
     {
-        _initializeStrat(_name, _otctrader);
+        _initializeStrat(_name);
     }
 
     // this is called by our original strategy, as well as any clones
-    function _initializeStrat(string memory _name, address _otctrader) internal {
+    function _initializeStrat(string memory _name) internal {
         // initialize variables
         maxReportDelay = 43200; // 1/2 day in seconds, if we hit this then harvestTrigger = True
-        healthCheck = 0xf13Cd6887C62B5beC145e30c38c4938c5E627fe0; // Fantom common health check
+        healthCheck = 0xf13Cd6887C62B5beC145e30c38c4938c5E627fe0; // Fantom common health check NEED TO CHANGE THIS TO OPTIMISM
 
         // set our strategy's name
         stratName = _name;
@@ -228,15 +121,12 @@ contract Strategy is BaseStrategy {
         minHarvestCredit = type(uint256).max;
 
         // add approvals on all tokens
-        IERC20(solidPoolAddress).approve(address(solidlyRouter), type(uint256).max);
-        woofy.approve(address(solidlyRouter), type(uint256).max);
-        yfi.approve(address(solidlyRouter), type(uint256).max);
+        IERC20(velodromePoolAddress).approve(address(velodromeRouter), type(uint256).max);
+        woofy.approve(address(velodromeRouter), type(uint256).max);
+        yfi.approve(address(velodromeRouter), type(uint256).max);
         // NEW ONES
         IERC20(solidPoolAddress).approve(oxPoolAddress, type(uint256).max);
         IERC20(oxPoolAddress).approve(stakingAddress, type(uint256).max);
-
-        IOTCTrader _trader = IOTCTrader(_otctrader);
-        _setupOTCTrader(address(_trader));
     }
 
     /* ========== VIEWS ========== */
@@ -280,7 +170,7 @@ contract Strategy is BaseStrategy {
         view
         returns (uint256 amountYfi, uint256 amountWoofy)
     {
-        (amountYfi, amountWoofy) = ISolidlyRouter(solidlyRouter)
+        (amountYfi, amountWoofy) = IVelodromeRouter(velodromeRouter)
             .quoteRemoveLiquidity(
                 address(yfi),
                 address(woofy),
@@ -418,144 +308,13 @@ contract Strategy is BaseStrategy {
         }
     }
 
-    //you need to swap token of amount to arb the peg
-    function neededToArbPeg()
-        public
-        view
-        returns (address token, uint256 amount)
-    {
-        uint256 yfiInLp = yfi.balanceOf(solidPoolAddress);
-        uint256 woofyInLp = woofy.balanceOf(solidPoolAddress);
-
-        //if arb is less than fees then no arb
-        if (
-            yfiInLp.mul(1_000) > woofyInLp.mul(999) &&
-            woofyInLp.mul(1_000) > yfiInLp.mul(999)
-        ) {
-            return (address(yfi), 0);
-        }
-
-        //this should return to peg ignoring fees
-        uint256 sq = sqrt(yfiInLp.mul(woofyInLp));
-
-        //if lp is unbalanced we need to arb it back to peg. if too much yfi in lp buy yfi. if too much woofy buy woofy
-        if (yfiInLp > woofyInLp) {
-            amount = sq.sub(woofyInLp);
-            token = address(woofy);
-        } else {
-            amount = sq.sub(yfiInLp);
-            token = address(yfi);
-        }
-    }
-
-    //get token of amount from otc
-    function _getFromOTC(IERC20 token, uint256 amount)
-        internal
-        returns (uint256 newBalance)
-    {
-        //the token in is opposite of what we want out
-        address tokenIn = address(token) == address(yfi)
-            ? address(woofy)
-            : address(yfi);
-
-        newBalance = token.balanceOf(address(this));
-        //the balance of what we need to provide the swapper
-        uint256 balanceIn = IERC20(tokenIn).balanceOf(address(this));
-        uint256 tokenInSwapper = token.balanceOf(address(otcSwapper));
-
-        //if there isnt enough in the swapper, adjust what we ask for
-        if (tokenInSwapper < amount) {
-            amount = tokenInSwapper;
-        }
-        //if we cant afford to provide the tokenin for the amount we want, adjust what we ask for
-        if (balanceIn < amount) {
-            amount = balanceIn;
-        }
-
-        //if the amount to swap is tiny dont bother
-        if (amount > dustThreshold) {
-            otcSwapper.trade(tokenIn, Math.min(amount, tokenInSwapper));
-            newBalance = token.balanceOf(address(this));
-        }
-    }
-
-    function arbThePeg() external onlyEmergencyAuthorized {
-        _arbThePeg();
-    }
-
-    function _arbThePeg() internal {
-        (address token, uint256 amount) = neededToArbPeg();
-        address tokenOut = token == address(yfi)
-            ? address(woofy)
-            : address(yfi);
-
-        if (amount < dustThreshold) {
-            return;
-        }
-
-        uint256 yfiBalance = balanceOfWant();
-        uint256 woofyBalance = balanceOfWoofy();
-
-        uint256 toBuy;
-
-        if (token == address(yfi)) {
-            if (yfiBalance < amount) {
-                yfiBalance = _getFromOTC(yfi, amount - yfiBalance);
-            }
-
-            toBuy = Math.min(amount, yfiBalance);
-        } else if (token == address(woofy)) {
-            if (woofyBalance < amount) {
-                woofyBalance = _getFromOTC(woofy, amount - woofyBalance);
-            }
-
-            toBuy = Math.min(amount, woofyBalance);
-        }
-
-        if (toBuy < dustThreshold) {
-            return;
-        }
-
-        ISolidlyRouter(solidlyRouter).swapExactTokensForTokensSimple(
-            toBuy,
-            toBuy,
-            token,
-            tokenOut,
-            false,
-            address(this),
-            type(uint256).max
-        );
-    }
-
     function adjustPosition(uint256 _debtOutstanding) internal override {
         if (emergencyExit) {
             return;
         }
 
-        _arbThePeg();
-
-        uint256 yfiInLp = yfi.balanceOf(solidPoolAddress);
-        uint256 woofyInLp = woofy.balanceOf(solidPoolAddress);
-
-        if (
-            yfiInLp.mul(DENOMINATOR) < woofyInLp.mul(lpSlippage) ||
-            woofyInLp.mul(DENOMINATOR) < yfiInLp.mul(lpSlippage)
-        ) {
-            //if the pool is still imbalanced after the arb dont do anything
-            return;
-        }
-
         uint256 yfiBalance = balanceOfWant();
         uint256 woofyBalance = balanceOfWoofy();
-
-        //need equal yfi and woofy
-        if (yfiBalance > woofyBalance) {
-            uint256 desiredWoofy = (yfiBalance - woofyBalance) / 2;
-            _getFromOTC(woofy, desiredWoofy);
-        } else {
-            uint256 desiredYfi = (woofyBalance - yfiBalance) / 2;
-            _getFromOTC(yfi, desiredYfi);
-        }
 
         yfiBalance = balanceOfWant();
         woofyBalance = balanceOfWoofy();
@@ -564,7 +323,7 @@ contract Strategy is BaseStrategy {
             return;
         }
 
-        ISolidlyRouter(solidlyRouter).addLiquidity(
+        IVelodromeRouter(velodromeRouter).addLiquidity(
             address(yfi),
             address(woofy),
             false,
@@ -656,7 +415,7 @@ contract Strategy is BaseStrategy {
                 }
 
                 if (balanceOfLpTokens > 0) {
-                    ISolidlyRouter(solidlyRouter).removeLiquidity(
+                    IVelodromeRouter(velodromeRouter).removeLiquidity(
                         address(yfi),
                         address(woofy),
                         false,
@@ -668,20 +427,7 @@ contract Strategy is BaseStrategy {
                     );
                 }
 
-                //now we have a bunch of yfi and woofy
-
-                //now we swap if we can at a profit
-                uint256 yfiInLp = yfi.balanceOf(solidPoolAddress);
-                uint256 woofyInLp = woofy.balanceOf(solidPoolAddress);
-                if (yfiInLp > woofyInLp.add(dustThreshold)) {
-                    //we can arb
-                    _arbThePeg();
-                }
-
                 balanceOfYfi = balanceOfWant();
-                if (balanceOfYfi < _amountNeeded) {
-                    balanceOfYfi = _getFromOTC(yfi, _amountNeeded - balanceOfYfi);
-                }
 
                 _liquidatedAmount = Math.min(balanceOfYfi, _amountNeeded);
 
@@ -705,7 +451,7 @@ contract Strategy is BaseStrategy {
             // Redeem/burn oxPool LP for Solidly LP	
             oxPool.withdrawLp(oxLpBalance);
         }
-        ISolidlyRouter(solidlyRouter).removeLiquidity(
+        IVelodromeRouter(velodromeRouter).removeLiquidity(
             address(yfi),
             address(woofy),
             false,
@@ -715,13 +461,7 @@ contract Strategy is BaseStrategy {
             address(this),
             type(uint256).max
         );
-        _getFromOTC(yfi, type(uint256).max); //swap all we can
-
-        //if we have woofy left revert
-        if (!takeLosses) {
-            require(balanceOfWoofy() == 0);
-        }
-
+        
         return balanceOfWant();
     }
 
@@ -803,18 +543,6 @@ contract Strategy is BaseStrategy {
         returns (address[] memory)
     {}
 
-    function _setupOTCTrader(address _trader) internal {
-        if (address(otcSwapper) != address(0)) {
-            woofy.approve(address(otcSwapper), 0);
-            yfi.approve(address(otcSwapper), 0);
-        }
-
-        otcSwapper = IOTCTrader(_trader);
-
-        woofy.approve(_trader, type(uint256).max);
-        yfi.approve(_trader, type(uint256).max);
-    }
-
     function removeTradeFactoryPermissions() external onlyEmergencyAuthorized {
         _removeTradeFactoryPermissions();
     }
@@ -833,11 +561,6 @@ contract Strategy is BaseStrategy {
 
     function setTakeLosses(bool _takeLosses) external onlyVaultManagers {
         takeLosses = _takeLosses;
-    }
-
-    function removeOTCTraderPermissions() external onlyEmergencyAuthorized {
-        woofy.approve(address(otcSwapper), 0);
-        yfi.approve(address(otcSwapper), 0);
     }
 
     function updateTradeFactory(address _newTradeFactory)
