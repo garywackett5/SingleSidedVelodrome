@@ -4,7 +4,7 @@
 // Feel free to change this version of Solidity. We support >=0.6.0 <0.7.0;
 pragma solidity 0.6.12;
 pragma experimental ABIEncoderV2;
-// Gary's Velodrome Branch (Optimism)
+// Gary's SSV Strat - USDC/sUSD
 // These are the core Yearn libraries
 import {BaseStrategy, StrategyParams} from "@yearnvaults/contracts/BaseStrategy.sol";
 import {SafeERC20, SafeMath, IERC20, Address} from "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
@@ -68,16 +68,14 @@ contract Strategy is BaseStrategy {
     // address public tradeFactory = 0xD3f89C21719Ec5961a3E6B0f9bBf9F9b4180E9e9;
 
     address public velodromePoolAddress = 
-        address(0x4F7ebc19844259386DBdDB7b2eB759eeFc6F8353); // StableV1 AMM - USDC/DAI
-    // address public oxPoolAddress = 
-        address(0x5473DE6376A5DA114DE21f63E673fE76e509e55C);
-    // address public stakingAddress = 
-        address(0x2799e089550979D5E268559bEbca3990dCbeD18b);
+        address(0xd16232ad60188B68076a235c65d692090caba155); // StableV1 AMM - USDC/sUSD
+    address public stakingAddress = 
+       address(0xb03f52D2DB3e758DD49982Defd6AeEFEa9454e80); // Gauge
 
     IERC20 internal constant usdc =
         IERC20(0x7F5c764cBc14f9669B88837ca1490cCa17c31607);
-    IERC20 internal constant dai =
-        IERC20(0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1);
+    IERC20 internal constant susd =
+        IERC20(0x8c6f28f2F1A3C87F0f938b96d27520d9751ec8d9);
 
     IERC20 internal constant velo =
         IERC20(0x3c8B650257cFb5f272f799F5e2b4e65093a11a05);
@@ -89,9 +87,9 @@ contract Strategy is BaseStrategy {
     string internal stratName; // we use this for our strategy's name on cloning
 
     // IOxPool public oxPool =
-        IOxPool(0x5473DE6376A5DA114DE21f63E673fE76e509e55C);
+    //    IOxPool(0x5473DE6376A5DA114DE21f63E673fE76e509e55C);
     // IMultiRewards public multiRewards =
-        IMultiRewards(0x2799e089550979D5E268559bEbca3990dCbeD18b);
+    //    IMultiRewards(0x2799e089550979D5E268559bEbca3990dCbeD18b);
     uint256 dustThreshold = 1e14;
 
     bool internal forceHarvestTriggerOnce; // only set this to true externally when we want to trigger our keepers to harvest for us
@@ -124,9 +122,7 @@ contract Strategy is BaseStrategy {
         IERC20(velodromePoolAddress).approve(address(velodromeRouter), type(uint256).max);
         woofy.approve(address(velodromeRouter), type(uint256).max);
         yfi.approve(address(velodromeRouter), type(uint256).max);
-        // NEW ONES
-        IERC20(solidPoolAddress).approve(oxPoolAddress, type(uint256).max);
-        IERC20(oxPoolAddress).approve(stakingAddress, type(uint256).max);
+        IERC20(velodromePoolAddress).approve(stakingAddress, type(uint256).max);
     }
 
     /* ========== VIEWS ========== */
