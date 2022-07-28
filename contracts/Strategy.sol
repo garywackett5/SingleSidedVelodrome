@@ -48,6 +48,17 @@ interface IVelodromeRouter {
     ) external view returns (uint256 amountA, uint256 amountB);
 }
 
+interface IGauge {
+    function deposit(
+        uint amount,
+        uint tokenId
+    ) public lock;
+
+    function claimFees(
+
+    )
+}
+
 interface ITradeFactory {
     function enable(address, address) external;
 }
@@ -86,10 +97,9 @@ contract Strategy is BaseStrategy {
 
     string internal stratName; // we use this for our strategy's name on cloning
 
-    // IOxPool public oxPool =
-    //    IOxPool(0x5473DE6376A5DA114DE21f63E673fE76e509e55C);
-    // IMultiRewards public multiRewards =
-    //    IMultiRewards(0x2799e089550979D5E268559bEbca3990dCbeD18b);
+    IGauge public gauge =
+       IGauge(0xb03f52D2DB3e758DD49982Defd6AeEFEa9454e80);
+
     uint256 dustThreshold = 1e14;
 
     bool internal forceHarvestTriggerOnce; // only set this to true externally when we want to trigger our keepers to harvest for us
@@ -120,8 +130,8 @@ contract Strategy is BaseStrategy {
 
         // add approvals on all tokens
         IERC20(velodromePoolAddress).approve(address(velodromeRouter), type(uint256).max);
-        woofy.approve(address(velodromeRouter), type(uint256).max);
-        yfi.approve(address(velodromeRouter), type(uint256).max);
+        usdc.approve(address(velodromeRouter), type(uint256).max);
+        susd.approve(address(velodromeRouter), type(uint256).max);
         IERC20(velodromePoolAddress).approve(stakingAddress, type(uint256).max);
     }
 
@@ -291,19 +301,6 @@ contract Strategy is BaseStrategy {
         forceHarvestTriggerOnce = false;
     }
 
-    function sqrt(uint256 y) internal pure returns (uint256 z) {
-        if (y > 3) {
-            z = y;
-            uint256 x = y / 2 + 1;
-            while (x < z) {
-                z = x;
-                x = (y / x + x) / 2;
-            }
-        } else if (y != 0) {
-            z = 1;
-        }
-    }
-
     function adjustPosition(uint256 _debtOutstanding) internal override {
         if (emergencyExit) {
             return;
@@ -334,12 +331,8 @@ contract Strategy is BaseStrategy {
         uint256 lpBalance = balanceOfsolidPool();
 
         if (lpBalance > 0) {	
-            // Transfer Solidly LP to ox pool to receive Ox pool LP receipt token	
-            oxPool.depositLp(lpBalance);
-
-            uint256 oxBalance = balanceOfOxPool();
-            // Stake oxLP in multirewards	
-            multiRewards.stake(oxBalance);	
+            // Deposit lp tokens into lp gauge	
+            gauge.deposit(lpBalance);
         }
     }
 
