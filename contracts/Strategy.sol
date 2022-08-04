@@ -21,13 +21,7 @@ interface IVelodromeRouter {
         uint256,
         address,
         uint256
-    )
-        external
-        returns (
-            uint256 amountA,
-            uint256 amountB,
-            uint256 liquidity
-        );
+    ) external returns (uint256 amountA, uint256 amountB, uint256 liquidity);
 
     function removeLiquidity(
         address tokenA,
@@ -54,9 +48,16 @@ interface IGauge {
         uint tokenId
     ) public lock;
 
-    function claimFees(
+    function claimFees() external lock returns (uint claimed0, uint claimed1);
 
-    )
+    function withdraw(
+        uint amount
+    ) public;
+
+    function getReward(
+        address account,
+        address[] memory tokens
+    ) external lock;
 }
 
 interface ITradeFactory {
@@ -83,11 +84,11 @@ contract Strategy is BaseStrategy {
     address public stakingAddress = 
        address(0xb03f52D2DB3e758DD49982Defd6AeEFEa9454e80); // Gauge
 
+    // tokens
     IERC20 internal constant usdc =
         IERC20(0x7F5c764cBc14f9669B88837ca1490cCa17c31607);
     IERC20 internal constant susd =
         IERC20(0x8c6f28f2F1A3C87F0f938b96d27520d9751ec8d9);
-
     IERC20 internal constant velo =
         IERC20(0x3c8B650257cFb5f272f799F5e2b4e65093a11a05);
 
@@ -105,7 +106,7 @@ contract Strategy is BaseStrategy {
     bool internal forceHarvestTriggerOnce; // only set this to true externally when we want to trigger our keepers to harvest for us
     uint256 public minHarvestCredit; // if we hit this amount of credit, harvest the strategy
 
-    bool public takeLosses;
+    // bool public takeLosses; UNUSED
 
     /* ========== CONSTRUCTOR ========== */
 
@@ -116,11 +117,15 @@ contract Strategy is BaseStrategy {
         _initializeStrat(_name);
     }
 
+    /* ========== CLONING ========== */
+
+    event Cloned(address indexed clone);
+
     // this is called by our original strategy, as well as any clones
     function _initializeStrat(string memory _name) internal {
         // initialize variables
-        maxReportDelay = 43200; // 1/2 day in seconds, if we hit this then harvestTrigger = True
-        healthCheck = 0xf13Cd6887C62B5beC145e30c38c4938c5E627fe0; // Fantom common health check NEED TO CHANGE THIS TO OPTIMISM
+        maxReportDelay = 86400; // 1 day in seconds, if we hit this then harvestTrigger = True // NEED TO CHANGE THIS???
+        healthCheck = 0xf13Cd6887C62B5beC145e30c38c4938c5E627fe0; // Fantom common health check // NEED TO CHANGE THIS TO OPTIMISM
 
         // set our strategy's name
         stratName = _name;
@@ -141,64 +146,57 @@ contract Strategy is BaseStrategy {
         return stratName;
     }
 
-    // balance of yfi in strat - should be zero most of the time
+    // balance of usdc in strat - should be zero most of the time
     function balanceOfWant() public view returns (uint256) {
         return want.balanceOf(address(this));
     }
 
-    // balance of woofy in strat - should be zero most of the time
-    function balanceOfWoofy() public view returns (uint256) {
-        return woofy.balanceOf(address(this));
+    // balance of susd in strat - should be zero most of the time
+    function balanceOfSusd() public view returns (uint256) {
+        return susd.balanceOf(address(this));
     }
 
-    // view our balance of unstaked solidLP tokens - should be zero most of the time
-    function balanceOfsolidPool() public view returns (uint256) {
-        return IERC20(solidPoolAddress).balanceOf(address(this));
+    // view our balance of unstaked velodrome LP tokens - should be zero most of the time
+    function balanceOfLPUnstaked() public view returns (uint256) {
+        return IERC20(velodromePoolAddress).balanceOf(address(this));
     }
 
-    // view our balance of unstaked oxLP tokens - should be zero most of the time
-    function balanceOfOxPool() public view returns (uint256) {
-        return oxPool.balanceOf(address(this));
-    }
-
-    // view our balance of staked oxLP tokens
-    function balanceOfMultiRewards() public view returns (uint256) {
-        return multiRewards.balanceOf(address(this));
-    }
-
-    // view our balance of unstaked and staked oxLP tokens
+    // view our balance of staked velodrome LP tokens
     function balanceOfLPStaked() public view returns (uint256) {
-        return balanceOfOxPool().add(balanceOfMultiRewards());
+        return gauge.balanceOf(address(this));
+    }
+
+    // view our balance of unstaked and staked velodrome LP tokens
+    function balanceOfLPTotal() public view returns (uint256) {
+        return balanceOfLPUnstaked().add(balanceOfLPStaked());
     }
 
     function balanceOfConstituents(uint256 liquidity)
         public
         view
-        returns (uint256 amountYfi, uint256 amountWoofy)
+        returns (uint256 amountUsdc, uint256 amountSusd)
     {
-        (amountYfi, amountWoofy) = IVelodromeRouter(velodromeRouter)
+        (amountUsdc, amountSusd) = IVelodromeRouter(velodromeRouter)
             .quoteRemoveLiquidity(
-                address(yfi),
-                address(woofy),
-                false, // volatile pool
+                address(usdc),
+                address(susd),
+                true, // stable pool
                 liquidity
             );
     }
 
-    //yfi and woofy are interchangeable 1-1. so we need our balance of each. added to whatever we can withdraw from lps
+    //usdc and susd are interchangeable 1-1. so we need our balance of each. added to whatever we can withdraw from lps
     function estimatedTotalAssets() public view override returns (uint256) {
-        uint256 lpTokens = balanceOfLPStaked().add(
-            balanceOfsolidPool()
-        );
+        uint256 lpTokens = balanceOfLPTotal();
 
-        (uint256 amountYfi, uint256 amountWoofy) = balanceOfConstituents(
+        (uint256 amountUsdc, uint256 amountSusd) = balanceOfConstituents(
             lpTokens
         );
 
         return	
-            amountWoofy.add(balanceOfWoofy()).add(balanceOfWant()).add(	
-                amountYfi	
-            );	
+            amountSusd.add(balanceOfSusd()).add(balanceOfWant()).add(	
+                amountUsdc
+            );
     }
 
     // NOT TRUE ANYMORE... our main trigger is regarding our DCA since there is low liquidity for our emissionToken
@@ -250,7 +248,7 @@ contract Strategy is BaseStrategy {
         if (tradesEnabled == false && tradeFactory != address(0)) {
             _setUpTradeFactory();
         }
-        // claim our rewards
+        // claim our VELO rewards HOW EXACTLY DO WE DO THIS FOR A VELODROME GAUGE???
         multiRewards.getReward();
 
         uint256 assets = estimatedTotalAssets();
@@ -307,10 +305,10 @@ contract Strategy is BaseStrategy {
         }
 
         uint256 yfiBalance = balanceOfWant();
-        uint256 woofyBalance = balanceOfWoofy();
+        uint256 woofyBalance = balanceOfSusd();
 
         yfiBalance = balanceOfWant();
-        woofyBalance = balanceOfWoofy();
+        woofyBalance = balanceOfSusd();
 
         if (yfiBalance < dustThreshold || woofyBalance < dustThreshold) {
             return;
@@ -319,7 +317,7 @@ contract Strategy is BaseStrategy {
         IVelodromeRouter(velodromeRouter).addLiquidity(
             address(yfi),
             address(woofy),
-            false,
+            true,
             yfiBalance,
             woofyBalance,
             0,
@@ -328,7 +326,7 @@ contract Strategy is BaseStrategy {
             2**256 - 1
         );
 
-        uint256 lpBalance = balanceOfsolidPool();
+        uint256 lpBalance = balanceOfLPUnstaked();
 
         if (lpBalance > 0) {	
             // Deposit lp tokens into lp gauge	
@@ -371,43 +369,39 @@ contract Strategy is BaseStrategy {
         override
         returns (uint256 _liquidatedAmount, uint256 _loss)
     {
-        uint256 balanceOfYfi = balanceOfWant();
+        uint256 balanceOfUsdc = balanceOfWant();
 
-        // if we need more yfi than is already loose in the contract
-        if (balanceOfYfi < _amountNeeded) {
-            // yfi needed beyond any yfi that is already loose in the contract
-            uint256 amountToFree = _amountNeeded.sub(balanceOfYfi);
+        // if we need more usdc than is already loose in the strategy
+        if (balanceOfUsdc < _amountNeeded) {
+            // amountToFree = the usdc needed beyond any usdc that is already loose in the strategy
+            uint256 amountToFree = _amountNeeded.sub(balanceOfUsdc);
 
             if (amountToFree > dustThreshold) {
                 // converts this amount into lpTokens
-                uint256 lpTokensNeeded = yfiToLpTokens(amountToFree);
+                uint256 lpTokensNeeded = usdcToLpTokens(amountToFree);
 
-                uint256 balanceOfLpTokens = balanceOfsolidPool();
+                uint256 balanceOfUnstaked = balanceOfLPUnstaked();
 
-                if (balanceOfLpTokens < lpTokensNeeded) {
-                    uint256 toWithdrawfromOxdao = lpTokensNeeded.sub(
-                        balanceOfLpTokens
+                if (balanceOfUnstaked < lpTokensNeeded) {
+                    uint256 amountToUnstake = lpTokensNeeded.sub(
+                        balanceOfUnstaked
                     );
 
-                    // balance of oxlp staked in multiRewards
-                    uint256 staked = balanceOfLPStaked();
-                    if (staked > 0) {
-                        // Withdraw oxLP from multiRewards	
-                        multiRewards.withdraw(Math.min(toWithdrawfromOxdao, staked));	
-                        // our balance of oxlp in oxPool	
-                        uint256 oxLpBalance = balanceOfOxPool();	
-                        // Redeem/burn oxPool LP for Solidly LP	
-                        oxPool.withdrawLp(Math.min(toWithdrawfromOxdao, oxLpBalance));
+                    // balance of lp tokens staked in gauge
+                    uint256 balanceOfStaked = balanceOfLPStaked();
+                    if (balanceOfStaked > 0) {
+                        // Withdraw lp tokens from gauge	
+                        gauge.withdraw(Math.min(amountToUnstake, balanceOfStaked));
                     }
 
-                    balanceOfLpTokens = balanceOfsolidPool();
+                    balanceOfLpTokens = balanceOfLPUnstaked();
                 }
 
                 if (balanceOfLpTokens > 0) {
                     IVelodromeRouter(velodromeRouter).removeLiquidity(
-                        address(yfi),
-                        address(woofy),
-                        false,
+                        address(usdc),
+                        address(susd),
+                        true,
                         Math.min(lpTokensNeeded, balanceOfLpTokens),
                         0,
                         0,
@@ -416,9 +410,9 @@ contract Strategy is BaseStrategy {
                     );
                 }
 
-                balanceOfYfi = balanceOfWant();
+                balanceOfUsdc = balanceOfWant();
 
-                _liquidatedAmount = Math.min(balanceOfYfi, _amountNeeded);
+                _liquidatedAmount = Math.min(balanceOfUsdc, _amountNeeded);
 
                 if (_liquidatedAmount < _amountNeeded) {
                     _loss = _amountNeeded.sub(_liquidatedAmount);
@@ -430,21 +424,20 @@ contract Strategy is BaseStrategy {
     }
 
     function liquidateAllPositions() internal override returns (uint256) {
-        // our balance of oxlp staked in multiRewards	
-        uint256 staked = balanceOfLPStaked();	
-        if (staked > 0) {	
-            // Withdraw oxLP from multiRewards	
-            multiRewards.withdraw(staked);	
-            // our balance of oxlp in oxPool	
-            uint256 oxLpBalance = balanceOfOxPool();	
-            // Redeem/burn oxPool LP for Solidly LP	
-            oxPool.withdrawLp(oxLpBalance);
+        // balance of lp tokens staked in gauge	
+        uint256 balanceOfStaked = balanceOfLPStaked();	
+        if (balanceOfStaked > 0) {	
+            // Withdraw lp tokens from gauge	
+            gauge.withdraw(staked);	
         }
+
+        balanceOfLpTokens = balanceOfLPUnstaked();
+
         IVelodromeRouter(velodromeRouter).removeLiquidity(
-            address(yfi),
-            address(woofy),
-            false,
-            balanceOfsolidPool(),
+            address(usdc),
+            address(susd),
+            true,
+            balanceOfLPTokens,
             0,
             0,
             address(this),
@@ -456,46 +449,29 @@ contract Strategy is BaseStrategy {
 
     function prepareMigration(address _newStrategy) internal override {
         if (!depositerAvoid) {
-            // our balance of oxlp staked in multiRewards	
+            // our balance of velodrome lp tokens staked in gauge	
             uint256 staked = balanceOfLPStaked();	
             if (staked > 0) {	
                 // Withdraw oxLP from multiRewards	
-                multiRewards.withdraw(staked);	
-                // our balance of oxlp in oxPool	
-                uint256 oxLpBalance = balanceOfOxPool();	
-                // Redeem/burn oxPool LP for Solidly LP	
-                oxPool.withdrawLp(oxLpBalance);
+                gauge.withdraw(staked);	
             }
         }
 
-        uint256 lpBalance = balanceOfsolidPool();
+        uint256 lpBalance = balanceOfLPUnstaked();
 
         if (lpBalance > 0) {
             IERC20(solidPoolAddress).safeTransfer(_newStrategy, lpBalance);
         }
 
-        uint256 woofyBalance = balanceOfWoofy();
+        uint256 susdBalance = balanceOfSusd();
 
-        if (woofyBalance > 0) {
+        if (susdBalance > 0) {
             // send our total balance of woofy to the new strategy
-            woofy.transfer(_newStrategy, woofyBalance);
+            susd.transfer(_newStrategy, susdBalance);
         }
     }
 
-    // Withdraw all oxLP (and rewards) from multiRewards and Redeem/burn oxPool LP for Solidly LP	
-    function manualCompleteExit()	
-        external	
-        onlyEmergencyAuthorized	
-    {	
-        // Withdraw all oxLP (and rewards) from multiRewards	
-        multiRewards.exit();	
-        // our balance of oxlp in oxPool	
-        uint256 oxLpBalance = balanceOfOxPool();	
-        // Redeem/burn oxPool LP for Solidly LP	
-        oxPool.withdrawLp(oxLpBalance);	
-    }
-
-    // Withdraw oxLP from multiRewards	
+    // Withdraw velodrome LP token from gauge	
     function manualUnstake(uint256 amount)
         external	
         onlyEmergencyAuthorized	
@@ -503,26 +479,11 @@ contract Strategy is BaseStrategy {
         _manualUnstake(amount);
     }
 
-    // Withdraw oxLP from multiRewards	
+    // Withdraw velodrome LP token from gauge	
     function _manualUnstake(uint256 amount)
         internal	
     {	
-        multiRewards.withdraw(amount);	
-    }
-
-    // Redeem/burn oxPool LP for Solidly LP	
-    function manualWithdrawLP(uint256 amount)	
-        external	
-        onlyEmergencyAuthorized	
-    {	
-        _manualWithdrawLP(amount);	
-    }
-
-    // Redeem/burn oxPool LP for Solidly LP	
-    function _manualWithdrawLP(uint256 amount)	
-        internal
-    {	
-        oxPool.withdrawLp(amount);	
+        gauge.withdraw(amount);
     }
 
     function protectedTokens()
@@ -547,10 +508,10 @@ contract Strategy is BaseStrategy {
     }
 
     /* ========== SETTERS ========== */
-
-    function setTakeLosses(bool _takeLosses) external onlyVaultManagers {
-        takeLosses = _takeLosses;
-    }
+    // UNUSED
+    // function setTakeLosses(bool _takeLosses) external onlyVaultManagers {
+    //     takeLosses = _takeLosses;
+    // }
 
     function updateTradeFactory(address _newTradeFactory)
         external
