@@ -4,11 +4,17 @@
 // Feel free to change this version of Solidity. We support >=0.6.0 <0.7.0;
 pragma solidity 0.6.12;
 pragma experimental ABIEncoderV2;
-// Gary's SSV Strat - USDC/sUSD
+// Gary's USDC SSV Strat - USDC/sUSD
 // These are the core Yearn libraries
 import {BaseStrategy, StrategyParams} from "@yearnvaults/contracts/BaseStrategy.sol";
 import {SafeERC20, SafeMath, IERC20, Address} from "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import "@openzeppelin/contracts/math/Math.sol";
+
+struct route {
+    address from;
+    address to;
+    bool stable;
+}
 
 interface IVelodromeRouter {
     function addLiquidity(
@@ -22,6 +28,11 @@ interface IVelodromeRouter {
         address,
         uint256
     ) external returns (uint256 amountA, uint256 amountB, uint256 liquidity);
+
+    function getAmountsOut(
+        uint256 amountIn,
+        route[] memory routes
+    ) external view returns (uint256[] memory amounts);
 
     function removeLiquidity(
         address tokenA,
@@ -40,28 +51,41 @@ interface IVelodromeRouter {
         bool stable,
         uint256 liquidity
     ) external view returns (uint256 amountA, uint256 amountB);
+
+    function swapExactTokensForTokens(
+        uint amountIn,
+        uint amountOutMin,
+        route[] calldata routes,
+        address to,
+        uint deadline
+    ) external returns (uint[] memory amounts);
 }
 
 interface IGauge {
     function deposit(
         uint amount,
         uint tokenId
-    ) public lock;
+    ) public;
 
-    function claimFees() external lock returns (uint claimed0, uint claimed1);
+    // not sure if we need this function
+    function claimFees() external returns (uint claimed0, uint claimed1);
 
     function withdraw(
         uint amount
     ) public;
 
+    function derivedBalance(
+        address account
+    ) public view returns (uint);
+
     function getReward(
         address account,
         address[] memory tokens
-    ) external lock;
+    ) external;
 }
 
-interface ITradeFactory {
-    function enable(address, address) external;
+interface IPool {
+    function getReserves() public view returns (uint _reserve0, uint _reserve1, uint _blockTimestampLast);
 }
 
 contract Strategy is BaseStrategy {
@@ -74,10 +98,10 @@ contract Strategy is BaseStrategy {
     // swap stuff
     address internal constant velodromeRouter =
         0xa132DAB612dB5cB9fC9Ac426A0Cc215A3423F9c9;
-    bool public tradesEnabled;
     bool public realiseLosses;
     bool public depositerAvoid;
-    // address public tradeFactory = 0xD3f89C21719Ec5961a3E6B0f9bBf9F9b4180E9e9;
+    address[] public veloTokenPath; // path to sell VELO ARE THESE CORRECT???
+    address[] public usdcToSusdPath; // path to sell VELO
 
     address public velodromePoolAddress = 
         address(0xd16232ad60188B68076a235c65d692090caba155); // StableV1 AMM - USDC/sUSD
@@ -92,21 +116,21 @@ contract Strategy is BaseStrategy {
     IERC20 internal constant velo =
         IERC20(0x3c8B650257cFb5f272f799F5e2b4e65093a11a05);
 
-    uint256 public lpSlippage = 9995; //0.05% slippage allowance
+    uint256 public lpSlippage = 9980; //0.2% slippage allowance
 
     uint256 immutable DENOMINATOR = 10_000;
 
     string internal stratName; // we use this for our strategy's name on cloning
 
+    IPool public pool =
+        IPool(0xd16232ad60188B68076a235c65d692090caba155);
     IGauge public gauge =
        IGauge(0xb03f52D2DB3e758DD49982Defd6AeEFEa9454e80);
 
-    uint256 dustThreshold = 1e14;
+    uint256 dustThreshold = 1e14; // need to set this correctly for usdc and susd
 
     bool internal forceHarvestTriggerOnce; // only set this to true externally when we want to trigger our keepers to harvest for us
     uint256 public minHarvestCredit; // if we hit this amount of credit, harvest the strategy
-
-    // bool public takeLosses; UNUSED
 
     /* ========== CONSTRUCTOR ========== */
 
@@ -125,7 +149,7 @@ contract Strategy is BaseStrategy {
     function _initializeStrat(string memory _name) internal {
         // initialize variables
         maxReportDelay = 86400; // 1 day in seconds, if we hit this then harvestTrigger = True // NEED TO CHANGE THIS???
-        healthCheck = 0xf13Cd6887C62B5beC145e30c38c4938c5E627fe0; // Fantom common health check // NEED TO CHANGE THIS TO OPTIMISM
+        healthCheck = 0xf13Cd6887C62B5beC145e30c38c4938c5E627fe0; // Fantom common health check // NEED TO CHANGE THIS TO OPTIMISM!!!
 
         // set our strategy's name
         stratName = _name;
@@ -138,6 +162,10 @@ contract Strategy is BaseStrategy {
         usdc.approve(address(velodromeRouter), type(uint256).max);
         susd.approve(address(velodromeRouter), type(uint256).max);
         IERC20(velodromePoolAddress).approve(stakingAddress, type(uint256).max);
+
+        // set our paths DO WE NEED TO TELL IT TO USE THE STABLE OR VOLATILE POOL???
+        veloTokenPath = [address(velo), address(usdc)]; 
+        usdcToSusdPath = [address(usdc), address(susd)];
     }
 
     /* ========== VIEWS ========== */
@@ -148,7 +176,7 @@ contract Strategy is BaseStrategy {
 
     // balance of usdc in strat - should be zero most of the time
     function balanceOfWant() public view returns (uint256) {
-        return want.balanceOf(address(this));
+        return usdc.balanceOf(address(this));
     }
 
     // balance of susd in strat - should be zero most of the time
@@ -163,7 +191,8 @@ contract Strategy is BaseStrategy {
 
     // view our balance of staked velodrome LP tokens
     function balanceOfLPStaked() public view returns (uint256) {
-        return gauge.balanceOf(address(this));
+        // not sure this will work
+        return gauge.derivedBalance(address(this));
     }
 
     // view our balance of unstaked and staked velodrome LP tokens
@@ -185,7 +214,7 @@ contract Strategy is BaseStrategy {
             );
     }
 
-    //usdc and susd are interchangeable 1-1. so we need our balance of each. added to whatever we can withdraw from lps
+    // this treats usdc and susd as 1:1
     function estimatedTotalAssets() public view override returns (uint256) {
         uint256 lpTokens = balanceOfLPTotal();
 
@@ -199,7 +228,7 @@ contract Strategy is BaseStrategy {
             );
     }
 
-    // NOT TRUE ANYMORE... our main trigger is regarding our DCA since there is low liquidity for our emissionToken
+    // NOT TRUE ANYMORE... our main trigger is regarding our DCA since there is low liquidity for our emissionToken ???
     function harvestTrigger(uint256 callCostinEth)
         public
         view
@@ -245,12 +274,17 @@ contract Strategy is BaseStrategy {
             uint256 _debtPayment
         )
     {
-        if (tradesEnabled == false && tradeFactory != address(0)) {
-            _setUpTradeFactory();
-        }
-        // claim our VELO rewards HOW EXACTLY DO WE DO THIS FOR A VELODROME GAUGE???
-        multiRewards.getReward();
+        // claim our VELO rewards
+        // but what if we need to claim other tokens??? sweep???
+        gauge.getReward(address(this), address(velo));
 
+        uint256 veloBalance = velo.balanceOf(address(this));
+
+        // sell our claimed VELO rewards for USDC
+            if (veloBalance > 0) {
+                _sellVelo(veloBalance);
+            }
+        
         uint256 assets = estimatedTotalAssets();
         uint256 wantBal = balanceOfWant();
 
@@ -278,13 +312,14 @@ contract Strategy is BaseStrategy {
             }
         }
 
-        //amountToFree > 0 checking (included in the if statement)
         if (wantBal < amountToFree) {
+            // should this be amountToFree.sub(wantBal)???
             liquidatePosition(amountToFree);
 
             uint256 newLoose = balanceOfWant();
 
-            //if we dont have enough money adjust _debtOutstanding and only change profit if needed
+            // if we dont have enough money adjust _debtOutstanding and only change profit if needed
+            // i'm not 100% sure what's going on here
             if (newLoose < amountToFree) {
                 if (_profit > newLoose) {
                     _profit = newLoose;
@@ -304,52 +339,90 @@ contract Strategy is BaseStrategy {
             return;
         }
 
-        uint256 yfiBalance = balanceOfWant();
-        uint256 woofyBalance = balanceOfSusd();
+        // first we get the balance of each token in the pool
+        // DONT FORGET: usdc (6 decimals), susd (18 decimals)
+        uint256 usdcB = usdc.balanceOf(velodromePoolAddress).mul(1e12); // (now 18 decimals)
+        uint256 susdB = susd.balanceOf(velodromePoolAddress);
+        uint256 poolBalance = usdcB.add(susdB);
+        uint256 amountIn = poolBalance.div(20); // 5% of poolBalance
 
-        yfiBalance = balanceOfWant();
-        woofyBalance = balanceOfSusd();
+        // because it is a stable pool, lets check slippage by doing a trade against it.
+        route memory usdcToSusd = route(
+            address(usdc),
+            address(susd),
+            true
+        );
 
-        if (yfiBalance < dustThreshold || woofyBalance < dustThreshold) {
+        // check usdc to susd slippage
+        route[] memory routes = new route[](1);
+        routes[0] = usdcToSusd;
+        uint256 amountOut = IVelodromeRouter(velodromeRouter).getAmountsOut(
+            amountIn, // swap 5% of poolBalance
+            routes
+        )[1];
+
+        // allow up to 0.2% slippage on a swap of 5% of the poolBalance by default
+        if (amountOut < amountIn.mul(lpSlippage).div(DENOMINATOR)) {
+            // dont do anything because we would be lping into the pool at a bad price
             return;
         }
 
-        IVelodromeRouter(velodromeRouter).addLiquidity(
-            address(yfi),
-            address(woofy),
-            true,
-            yfiBalance,
-            woofyBalance,
-            0,
-            0,
-            address(this),
-            2**256 - 1
-        );
+        // send all of our want tokens to be deposited
+        uint256 usdcBal = balanceOfWant().mul(1e12); // now to 18 decimals (example, 1m)
+        uint256 susdBal = balanceOfSusd();
 
+        // dont bother for less than 10000 usdc
+        if (usdcBal.add(susdBal) < 1e22) {
+            return;
+        }
+        
+        // first we get the ratio of each token in the pool. this determines how many we need of each
+        // DONT FORGET: usdc (6 decimals), susd (18 decimals)
+        uint256 usdcB = usdc.balanceOf(velodromePoolAddress).mul(1e12); // 5m (18 decimals)
+        uint256 susdB = susd.balanceOf(velodromePoolAddress); // 5m (18 decimals)
+
+        uint256 susdWeNeed = usdcBal.mul(susdB).div(usdcB.add(susdB)); // 500k (18 decimals)
+        uint256 susdWeNeedInUsdc = susdWeNeed.div(1e12);
+        uint256 usdcWeHaveToSwap = susdWeNeedInUsdc.sub(susdBal);
+        uint256 usdcToSwap = math.min(usdcWeHaveToSwap, amountIn.div(1e12)); // amountIn = 5% of pool (converted back to 6 decimals)
+
+        IVelodromeRouter(velodromeRouter).swapExactTokensForTokens(
+            usdcToSwap,
+            uint256(0),
+            routes,
+            address(this),
+            block.timestamp
+        )[1];
+        
+        usdcBalNew = balanceOfWant();
+        susdBalNew = balanceOfSusd();
+
+        if (anyWftmBal > 0 && wftmBal > 0) {
+            // deposit into lp
+            ISolidlyRouter(solidlyRouter).addLiquidity(
+                address(usdc),
+                address(susd),
+                true,
+                usdcBalNew,
+                susdBalNew,
+                0,
+                0,
+                address(this),
+                2**256 - 1
+            );
+        }
+    
         uint256 lpBalance = balanceOfLPUnstaked();
 
-        if (lpBalance > 0) {	
-            // Deposit lp tokens into lp gauge	
+        if (lpBalance > 0) {
+            // deposit to gauge
             gauge.deposit(lpBalance);
         }
     }
 
-    function _setUpTradeFactory() internal {
-        //approve and set up trade factory
-        address _tradeFactory = tradeFactory;
-
-        ITradeFactory tf = ITradeFactory(_tradeFactory);
-        oxd.safeApprove(_tradeFactory, type(uint256).max);
-        tf.enable(address(oxd), address(want));
-
-        solid.safeApprove(_tradeFactory, type(uint256).max);
-        tf.enable(address(solid), address(want));
-        tradesEnabled = true;
-    }
-
-    //returns lp tokens needed to get that amount of yfi
-    function yfiToLpTokens(uint256 amountOfYfiWeWant) public returns (uint256) {
-        //amount of yfi and woofy for 1 lp token
+    // returns lp tokens needed to get that amount of usdc
+    function usdcToLpTokens(uint256 amountOfYfiWeWant) public returns (uint256) {
+        //amount of usdc and susd for 1 lp token
         (uint256 amountYfiPerLp, uint256 amountWoofy) = balanceOfConstituents(
             1e18
         );
@@ -447,6 +520,17 @@ contract Strategy is BaseStrategy {
         return balanceOfWant();
     }
 
+    // Sells our harvested VELO into the selected output (USDC)
+    function _sellVelo(uint256 _veloAmount) internal {
+        IVelodromeRouter(velodromeRouter).swapExactTokensForTokens(
+            _veloAmount,
+            uint256(0),
+            veloTokenPath,
+            address(this),
+            block.timestamp
+        );
+    }
+
     function prepareMigration(address _newStrategy) internal override {
         if (!depositerAvoid) {
             // our balance of velodrome lp tokens staked in gauge	
@@ -493,37 +577,7 @@ contract Strategy is BaseStrategy {
         returns (address[] memory)
     {}
 
-    function removeTradeFactoryPermissions() external onlyEmergencyAuthorized {
-        _removeTradeFactoryPermissions();
-    }
-
-    function _removeTradeFactoryPermissions() internal {
-        address _tradeFactory = tradeFactory;
-        oxd.safeApprove(_tradeFactory, 0);
-
-        solid.safeApprove(_tradeFactory, 0);
-
-        tradeFactory = address(0);
-        tradesEnabled = false;
-    }
-
     /* ========== SETTERS ========== */
-    // UNUSED
-    // function setTakeLosses(bool _takeLosses) external onlyVaultManagers {
-    //     takeLosses = _takeLosses;
-    // }
-
-    function updateTradeFactory(address _newTradeFactory)
-        external
-        onlyGovernance
-    {
-        if (tradeFactory != address(0)) {
-            _removeTradeFactoryPermissions();
-        }
-
-        tradeFactory = _newTradeFactory;
-        _setUpTradeFactory();
-    }
 
     ///@notice This allows us to manually harvest with our keeper as needed
     function setForceHarvestTriggerOnce(bool _forceHarvestTriggerOnce)
